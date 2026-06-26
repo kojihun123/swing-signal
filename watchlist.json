@@ -1,0 +1,9 @@
+{
+  "tickers": [
+    {"symbol": "NVDA", "sector_etf": "SOXX", "sector_name": "반도체"},
+    {"symbol": "AAPL", "sector_etf": "XLK",  "sector_name": "기술"},
+    {"symbol": "MSFT", "sector_etf": "XLK",  "sector_name": "기술"},
+    {"symbol": "META", "sector_etf": "XLC",  "sector_name": "통신"},
+    {"symbol": "LLY",  "sector_etf": "XLV",  "sector_name": "헬스케어"}
+  ]
+}

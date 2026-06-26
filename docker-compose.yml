@@ -1,0 +1,18 @@
+services:
+  stock-signal:
+    build: .
+    container_name: stock-signal
+    volumes:
+      - ./src:/app/src                  # 코드 실시간 반영
+      - ./data:/app/data                # 분석 결과 저장
+      - ./watchlist.json:/app/watchlist.json  # 종목 리스트
+      - ./.env:/app/.env:ro             # API 키 (읽기 전용)
+    env_file:
+      - .env
+    environment:
+      # 스케줄(22:30/06:10/30분)은 KST 기준 → 컨테이너 TZ는 한국시간.
+      # 미국장 판단(now_market)은 코드에서 America/New_York로 명시 변환.
+      - TZ=Asia/Seoul         # 스케줄/알림 표시: 한국 시간
+      - NOTIFY_TZ=Asia/Seoul  # 알림 표시 시간대
+      - PYTHONUNBUFFERED=1     # 로그 즉시 출력
+    restart: unless-stopped
