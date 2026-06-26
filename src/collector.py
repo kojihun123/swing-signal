@@ -387,12 +387,15 @@ def collect(ticker: str, retries: int = 3, base_pause: float = 2.0) -> StockData
                 fund["upside"] = (nv["target_mean"] / px - 1) * 100
         except Exception:  # noqa: BLE001
             pass
+    # ETF는 실적·손익 데이터가 없어 yfinance가 404/경고를 쏟으므로 건너뜀
+    is_etf = str(raw.get("quoteType", "")).upper() == "ETF"
+    if not is_etf:
+        try:
+            fund.update(fetch_income_items(tk))
+        except Exception:  # noqa: BLE001
+            pass
     try:
-        fund.update(fetch_income_items(tk))
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        earnings = fetch_earnings(ticker, tk, fund)
+        earnings = {} if is_etf else fetch_earnings(ticker, tk, fund)
     except Exception as ee:  # noqa: BLE001
         print(f"[수집] {ticker} 실적 데이터 일부 실패: {ee}")
         earnings = {}
