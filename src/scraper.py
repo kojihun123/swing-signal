@@ -193,22 +193,22 @@ def _yf_intraday_price(symbol: str, prepost: bool = True) -> float | None:
 
 
 def latest_price(symbol: str, prepost: bool = True) -> float | None:
-    """가장 신선한 체결가 (KIS 데이마켓 우선, 시간대 인지).
+    """가장 신선한 체결가 (시간대 인지).
 
-    0) KIS: 데이장/프리/정규/애프터 전 세션 (키 있을 때만, 오버나잇 유일 소스).
-    1) CNBC 크롤: 장 외엔 시간외(extended), 장중엔 정규(regular) 가격.
-    2) 폴백: 정규장이면 Finnhub 실시간, 장 외면 yfinance 시간외 1분봉.
-    3) 최후: Finnhub 마지막가.
+    1) 토스 현재가 (한미 통일).
+    2) CNBC 크롤: 장 외엔 시간외(extended), 장중엔 정규(regular) 가격.
+    3) 폴백: 정규장이면 Finnhub 실시간, 장 외면 yfinance 시간외 1분봉.
+    4) 최후: Finnhub 마지막가.
     """
-    # 0) KIS (데이마켓 포함 전 세션) — 무료 소스가 못 잡는 오버나잇 커버
+    # 0) 토스 현재가
     try:
-        import kis
-        if kis.enabled():
-            q = kis.quote(symbol)
-            if q and q.get("price"):
-                return q["price"]
+        import toss
+        if toss.enabled():
+            p = toss.price(symbol)
+            if p:
+                return p
     except Exception as e:  # noqa: BLE001
-        print(f"[시세] {symbol} KIS 실패: {e}")
+        print(f"[시세] {symbol} 토스 실패: {e}")
 
     try:
         from utils import is_market_open
@@ -243,7 +243,7 @@ def latest_price(symbol: str, prepost: bool = True) -> float | None:
 def base_price(symbol: str, prepost: bool = True) -> float | None:
     """풀 분석 기준가(장 시작가급): 공식 API 최신가 — 크롤(CNBC) 미사용.
 
-    토스(한미 통일 현재가) 우선 → KIS → yfinance → Finnhub.
+    토스(한미 통일 현재가) 우선 → yfinance → Finnhub.
     """
     try:
         import toss
@@ -253,14 +253,6 @@ def base_price(symbol: str, prepost: bool = True) -> float | None:
                 return p
     except Exception as e:  # noqa: BLE001
         print(f"[시세] {symbol} 토스 기준가 실패: {e}")
-    try:
-        import kis
-        if kis.enabled():
-            q = kis.quote(symbol)
-            if q and q.get("price"):
-                return q["price"]
-    except Exception as e:  # noqa: BLE001
-        print(f"[시세] {symbol} KIS 기준가 실패: {e}")
     p = _yf_intraday_price(symbol, prepost)
     if p is not None:
         return p

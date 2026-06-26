@@ -243,7 +243,7 @@ def _rows_to_df(rows: list[tuple]) -> pd.DataFrame:
 def ohlcv(symbol: str, period: str = "D", count: int = 220) -> pd.DataFrame:
     """네이버 차트 일봉 OHLCV(오름차순). period='W'는 일봉을 주봉으로 리샘플.
 
-    collector.kis.daily_ohlcv와 동일 포맷(오름차순 DatetimeIndex + OHLCV).
+    collector 호환 포맷(오름차순 DatetimeIndex + OHLCV).
     실패 시 빈 DataFrame.
     """
     url = _chart_url(symbol)

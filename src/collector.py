@@ -16,9 +16,23 @@ from datetime import datetime, timezone
 import pandas as pd
 import yfinance as yf
 
-import kis
 import naver
 import toss
+
+
+def _kr_indicators(ticker: str) -> dict:
+    """KR 종목: 네이버 핵심지표 → 펀더 머지용 dict(per/pbr/eps/52주). US는 {}."""
+    if not ticker.upper().endswith((".KS", ".KQ")):
+        return {}
+    try:
+        ind = naver.key_indicators(ticker) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    return {
+        "per": ind.get("per"), "pbr": ind.get("pbr"), "eps": ind.get("eps"),
+        "week52_high": ind.get("week52_high"), "week52_low": ind.get("week52_low"),
+        "currency": "KRW",
+    }
 
 # yfinance 1.4.x는 curl_cffi가 설치돼 있으면 내부적으로 브라우저를
 # 임퍼소네이트해 Yahoo rate limit(Too Many Requests)을 완화한다.
@@ -323,39 +337,34 @@ def collect(ticker: str, retries: int = 3, base_pause: float = 2.0) -> StockData
     · 펀더멘털: KIS(PER/EPS/PBR/시총/52주) + yfinance(ROE/성장률/애널리스트/어닝)
     KIS가 OHLCV를 주면 yfinance가 rate limit이어도 종목이 분석에서 누락되지 않는다.
     """
-    # ① OHLCV — 토스 우선 → 네이버 → KIS → yfinance 폴백
+    # ① OHLCV — 토스 우선 → 네이버 → yfinance 폴백
     daily = toss.ohlcv(ticker, "D", 220)
     if daily.empty:
         daily = naver.ohlcv(ticker, "D", 220)
-    if daily.empty:
-        daily = kis.daily_ohlcv(ticker, "D", 220)
     if daily.empty:
         daily = _yf_history_retry(ticker, "300d", "1d", retries, base_pause)
     weekly = toss.ohlcv(ticker, "W", 60)
     if weekly.empty:
         weekly = naver.ohlcv(ticker, "W", 60)
     if weekly.empty:
-        weekly = kis.daily_ohlcv(ticker, "W", 60)
-    if weekly.empty:
         weekly = _yf_history_retry(ticker, "1y", "1wk", retries, base_pause)
     daily, weekly = daily.tail(200), weekly.tail(52)
     if daily.empty:
         return StockData(ticker=ticker,
-                         error="일봉 데이터 없음 (KIS·yfinance 모두 실패)")
+                         error="일봉 데이터 없음 (토스·네이버·yfinance 모두 실패)")
 
-    # ② 펀더멘털 — KIS 기본 + yfinance 보완
-    kfund = kis.fundamentals(ticker) or {}
+    # ② 펀더멘털 — yfinance 기본 + (KR) 네이버 핵심지표(PER/PBR/EPS) 보완
+    kfund = _kr_indicators(ticker)        # KR: 네이버 지표, US: {}
     tk = _ticker(ticker)
     try:
         yf_fund, raw = fetch_fundamentals(ticker, tk)
     except Exception:  # noqa: BLE001
         yf_fund, raw = {}, {}
     raw = dict(raw or {})
-    # 통화는 시장 기준으로 확정 (KIS·yfinance 모두 실패해도 KR→KRW 보장)
+    # 통화는 시장 기준으로 확정 (모든 소스 실패해도 KR→KRW 보장)
     if not raw.get("currency"):
-        raw["currency"] = (kfund.get("currency")
-                           or ("KRW" if ticker.upper().endswith((".KS", ".KQ"))
-                               else "USD"))
+        raw["currency"] = ("KRW" if ticker.upper().endswith((".KS", ".KQ"))
+                           else "USD")
     fund = _merge_fundamentals(kfund, yf_fund, ticker)
     # 목표주가 컨센서스: 네이버(한국어 소스) 우선, 실패 시 yfinance 값 유지
     try:

@@ -133,7 +133,7 @@ def candles(symbol: str, interval: str = "1d", count: int = 200) -> list[dict]:
 def ohlcv(symbol: str, period: str = "D", count: int = 220) -> pd.DataFrame:
     """OHLCV DataFrame(오름차순 DatetimeIndex). period='W'는 일봉을 주봉 리샘플.
 
-    collector.kis.daily_ohlcv / naver.ohlcv와 동일 포맷. 실패 시 빈 DataFrame.
+    naver.ohlcv와 동일 포맷(오름차순 DatetimeIndex + OHLCV). 실패 시 빈 DataFrame.
     """
     if not enabled():
         return pd.DataFrame(columns=_OHLCV_COLS)
