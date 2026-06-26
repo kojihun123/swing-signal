@@ -28,6 +28,11 @@ import requests
 ET = ZoneInfo("America/New_York")
 
 QUOTE_URL = "https://finviz.com/quote.ashx?t={ticker}"
+
+
+def _is_kr(ticker: str) -> bool:
+    """한국 종목(.KS/.KQ)은 Finviz(미국 전용)에 없으므로 바로 yfinance를 쓴다."""
+    return ticker.upper().endswith((".KS", ".KQ"))
 # Finviz는 기본 requests UA를 차단하므로 브라우저 UA를 흉내낸다.
 _HEADERS = {
     "User-Agent": (
@@ -164,16 +169,25 @@ def fetch_news(ticker: str, limit: int = 5, within_hours: int = 24,
 
     24시간 이내 뉴스를 우선 반환하고, 없으면 가장 최근 N개로 폴백한다.
     """
-    url = QUOTE_URL.format(ticker=ticker.upper())
     rows: list[tuple[datetime, str, str]] = []
+    # 네이버 우선(한국어): KR 국내 뉴스 / US 한국어 번역뉴스(worldnews)
     try:
-        r = requests.get(url, headers=_HEADERS, timeout=timeout)
-        r.raise_for_status()
-        rows = _parse_rows(r.text)
+        import naver
+        rows = naver.news_rows(ticker)
     except Exception as e:  # noqa: BLE001
-        print(f"[뉴스] {ticker} Finviz 수집 실패: {e}")
+        print(f"[뉴스] {ticker} 네이버 수집 실패: {e}")
 
-    # Finviz가 비면(한국/비미국 종목 등) yfinance 뉴스로 폴백
+    # US 종목: 네이버가 비면 Finviz(영어) 폴백
+    if not rows and not _is_kr(ticker):
+        url = QUOTE_URL.format(ticker=ticker.upper())
+        try:
+            r = requests.get(url, headers=_HEADERS, timeout=timeout)
+            r.raise_for_status()
+            rows = _parse_rows(r.text)
+        except Exception as e:  # noqa: BLE001
+            print(f"[뉴스] {ticker} Finviz 수집 실패: {e}")
+
+    # 위 소스가 비면 yfinance 뉴스로 최종 폴백
     if not rows:
         rows = _yf_news_rows(ticker)
     if not rows:

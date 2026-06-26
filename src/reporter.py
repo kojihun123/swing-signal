@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import time
 
 import requests
@@ -18,6 +19,7 @@ from utils import fmt_kst, money, now_notify, pct, safe_num, today_stamp
 
 BAR = "━" * 20
 SUB = "-" * 40
+CARD_SEP = "─" * 14   # 모바일 카드 구분선(짧게)
 
 # 영문 신호 → 한글 표기
 SIGNAL_KO = {
@@ -28,6 +30,29 @@ SIGNAL_KO = {
 
 def _sig_ko(signal: str) -> str:
     return SIGNAL_KO.get(signal, signal or "중립")
+
+
+# 애널리스트 투자의견(yfinance recommendationKey) → 한글
+_RECO_KO = {
+    "strong_buy": "강력매수", "buy": "매수", "hold": "중립",
+    "underperform": "비중축소", "sell": "매도",
+}
+
+
+def _reco_ko(key) -> str:
+    return _RECO_KO.get(str(key or "").lower().replace(" ", "_"), "")
+
+
+def _z(v) -> str:
+    """점수 표시(None→'-')."""
+    return f"{v:.0f}" if isinstance(v, (int, float)) else "-"
+
+
+def _lvl(v) -> str:
+    """진입/목표/손절 숫자 (통화기호 없이 천단위 콤마, 1000↑은 정수)."""
+    if not isinstance(v, (int, float)):
+        return "-"
+    return f"{v:,.0f}" if abs(v) >= 1000 else f"{round(v, 2):g}"
 
 
 def _hm() -> str:
@@ -48,6 +73,24 @@ def _hm_from(iso: str | None) -> str:
 
 def _s(v, d=1, suf=""):
     return safe_num(v, d, suf)
+
+
+def _clip(text, limit: int = 120) -> str:
+    """AI 설명 길이 제한(기본 120자, 2문장). 공백 정규화 + 말줄임."""
+    t = " ".join(str(text or "").split())
+    parts = re.split(r"(?<=[.!?。…])\s+", t)
+    if len(parts) > 2:
+        t = " ".join(parts[:2])
+    return t if len(t) <= limit else t[:limit - 1].rstrip() + "…"
+
+
+# GICS 경기민감/방어 (로테이션 흐름 판정)
+_CYC_ETF = {"XLK", "SOXX", "XLF", "XLI", "XLY", "XLB", "XLE"}
+_DEF_ETF = {"XLU", "XLP", "XLV", "XLRE"}
+
+# 종합점수 가중치 (scorer.WEIGHTS와 동일 — 점수 산출 근거 표시용)
+_SCORE_W = {"macro": 0.20, "sector": 0.15, "fundamental": 0.25,
+            "growth": 0.10, "technical": 0.15, "sentiment": 0.10}
 
 
 # ---------- 컴포넌트 근거 ----------
@@ -128,21 +171,40 @@ def format_macro_briefing(macro, rotation=None) -> str:
         lines.append("📊 거시 환경: 측정불가 (FRED 키 미설정 → 보정 미적용)")
     m = macro.metrics
     if macro.available:
+        p = getattr(macro, "parts", {}) or {}
+        lines.append(f"   (통화 {_s(p.get('monetary'),0)} · 경기 {_s(p.get('economy'),0)}"
+                     f" · 금융 {_s(p.get('financial'),0)} · 심리 {_s(p.get('sentiment'),0)})")
         if m.get("fedfunds") is not None:
             lines.append(f"💰 금리: {_s(m.get('fedfunds'),2)}% · "
                          f"10년물 {_s(m.get('y10'),2)}% ({m.get('y10_trend','')})")
         if m.get("cpi_yoy") is not None:
-            lines.append(f"📈 물가: CPI {_s(m.get('cpi_yoy'),1)}% · "
-                         f"PCE {_s(m.get('pce_yoy'),1)}%")
+            econ = (f"📈 경기: CPI {_s(m.get('cpi_yoy'),1)}%/근원 "
+                    f"{_s(m.get('core_yoy'),1)}%")
+            if m.get("pmi_proxy") is not None:
+                econ += f" · PMI {_s(m.get('pmi_proxy'),1)}"
+            if m.get("retail_yoy") is not None:
+                econ += f" · 소매 {_s(m.get('retail_yoy'),1)}%"
+            lines.append(econ)
         emp = f"👷 고용: 실업률 {_s(m.get('unrate'),1)}%"
         if m.get("nfp_change") is not None:
             emp += f" · NFP {m['nfp_change']/10:+.0f}만"
         lines.append(emp)
+        fin = []
+        if m.get("dxy") is not None:
+            fin.append(f"달러 {_s(m.get('dxy'),1)}({m.get('dxy_trend','')})")
+        if m.get("hy_spread") is not None:
+            fin.append(f"HY스프레드 {_s(m.get('hy_spread'),2)}%")
+        if m.get("walcl_trend"):
+            fin.append(f"연준B/S {m.get('walcl_trend')}")
+        if fin:
+            lines.append("🏦 금융환경: " + " · ".join(fin))
     senti = []
     if m.get("vix") is not None:
         senti.append(f"VIX {_s(m.get('vix'),1)}")
     if m.get("fg_score") is not None:
         senti.append(f"F&G {_s(m.get('fg_score'),0)}({m.get('fg_label','')})")
+    if m.get("index_trend"):
+        senti.append(f"지수 {m.get('index_trend')}")
     if senti:
         lines.append("😰 심리: " + " · ".join(senti))
     if macro.available and m.get("spread") is not None:
@@ -293,11 +355,30 @@ def telegram_enabled() -> bool:
                 and os.environ.get("TELEGRAM_CHAT_ID"))
 
 
+def _split_message(text: str, limit: int = 4000) -> list[str]:
+    """텔레그램 4096자 제한 대비 줄 단위 분할."""
+    if len(text) <= limit:
+        return [text]
+    chunks, buf = [], ""
+    for line in text.split("\n"):
+        if len(buf) + len(line) + 1 > limit and buf:
+            chunks.append(buf)
+            buf = ""
+        buf += (line + "\n")
+    if buf.strip():
+        chunks.append(buf)
+    return chunks
+
+
 def send_telegram_message(text: str, retries: int = 2) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return False
+    # 길면 여러 메시지로 분할 전송
+    parts = _split_message(text)
+    if len(parts) > 1:
+        return all(send_telegram_message(p, retries) for p in parts)
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     for attempt in range(retries + 1):
         try:
@@ -417,75 +498,281 @@ def _md(date_str: str | None) -> str:
 # ---------- [1] 오늘의 분석 리포트 ----------
 
 
+_RATING_EMO = {"Strong Bullish": "🟢🟢", "Bullish": "🟢", "Neutral": "⚪",
+               "Bearish": "🔴", "Strong Bearish": "🔴🔴"}
+_RATING_RANK = {"Strong Bullish": 2, "Bullish": 1, "Neutral": 0,
+                "Bearish": -1, "Strong Bearish": -2}
+
+# ── 출력 전용 한국어 용어 변환(내부 계산값은 그대로, 표시만 쉬운 말로) ──
+_RATING_KO = {"Strong Bullish": "매우 강세", "Bullish": "강세", "Neutral": "중립",
+              "Bearish": "약세", "Strong Bearish": "매우 약세"}
+_PHASE_KO = {"Expansion": "경기 확장", "Neutral": "중립", "Contraction": "경기 위축",
+             "판단불가": "판단 불가"}
+_RISK_KO = {"Risk-On": "위험 선호", "Neutral": "중립", "Risk-Off": "위험 회피"}
+_LIQ_KO = {"Improving": "개선", "Neutral": "중립", "Tightening": "위축"}
+_TREND_KO = {"정배열": "상승 추세", "혼조": "방향성 없음", "역배열": "하락 추세"}
+_MOM_KO = {"Strong": "탄력 강함", "Moderate": "탄력 보통", "Weak": "탄력 약함"}
+_FIT_KO = {"High": "적합도 높음", "Medium": "적합도 보통", "Low": "적합도 낮음"}
+
+
+def _ko(table: dict, v, default: str = "") -> str:
+    return table.get(v, v if v is not None else default)
+
+
+def _rotation_lines(detail: dict) -> list[str]:
+    """섹터 상세 → 로테이션 흐름(유입/유출 + 스타일 우위)."""
+    scored = [d for d in detail.values() if d.get("score") is not None]
+    if not scored:
+        return []
+    ranked = sorted(scored, key=lambda d: (_RATING_RANK.get(d.get("rating"), 0),
+                                           d.get("score") or 0), reverse=True)
+    inflow = [d["label"] for d in ranked[:3]
+              if _RATING_RANK.get(d.get("rating"), 0) >= 1 or (d.get("score") or 0) >= 65]
+    outflow = [d["label"] for d in ranked[-3:][::-1]
+               if _RATING_RANK.get(d.get("rating"), 0) <= -1 or (d.get("score") or 0) <= 45]
+    cyc = [d["score"] for k, d in detail.items()
+           if k in _CYC_ETF and d.get("score") is not None]
+    deff = [d["score"] for k, d in detail.items()
+            if k in _DEF_ETF and d.get("score") is not None]
+    ca = sum(cyc) / len(cyc) if cyc else 0
+    da = sum(deff) / len(deff) if deff else 0
+    style = ("성장주 우위" if ca > da + 3 else "방어주 우위" if da > ca + 3
+             else "성장·방어 혼조")
+    out = []
+    if inflow:
+        out.append(f"  ▲ 유입: {' · '.join(inflow)}")
+    if outflow:
+        out.append(f"  ▼ 유출: {' · '.join(outflow)}")
+    out.append(f"  ↔ {style}")
+    return out
+
+
+def _gauge(value, maximum: int = 100, blocks: int = 10) -> str:
+    """0~max 값을 ■/□ 게이지 막대로."""
+    try:
+        filled = round(float(value) / maximum * blocks)
+    except (TypeError, ValueError):
+        return ""
+    filled = max(0, min(blocks, filled))
+    return "■" * filled + "□" * (blocks - filled)
+
+
+def _decision_reasons(t: dict) -> tuple[str, str, list[str]]:
+    """신호별 의사결정 근거 (이모지, 라벨, 항목 최대 3개)."""
+    sc = t.get("scores", {})
+    pairs = [("업종", sc.get("sector")), ("시장환경", sc.get("macro")),
+             ("기업가치", sc.get("fundamental")), ("차트", sc.get("technical"))]
+    strong = [n for n, v in pairs if v is not None and v >= 75]
+    weak = [n for n, v in pairs if v is not None and v <= 60]
+    sig = t.get("signal", "")
+    if sig in ("Strong Buy", "Buy"):
+        return "🟢", "매수근거", [f"{n} 강세" for n in strong[:3]] or ["종합 양호"]
+    if sig == "Watch":
+        items = [f"{n} 양호" for n in strong[:2]] + [f"{n} 애매" for n in weak[:1]]
+        return "🟡", "관망근거", items or ["혼조"]
+    return "🔴", "회피근거", [f"{n} 약세" for n in weak[:3]] or ["종합 부진"]
+
+
 def format_daily_report(daily: dict) -> str:
     macro = daily.get("macro", {})
     sector = daily.get("sector", {})
     mm = macro.get("metrics", {})
+    mp = macro.get("parts", {})
+    regime = macro.get("regime", {})
+    brief = daily.get("market_brief") or {}
+    detail = sector.get("detail", {})
 
     lines = [BAR, f"📊 오늘의 분석 리포트 [{_md(daily.get('date'))}]", BAR]
 
-    # 거시
+    # ── 오늘의 핵심 테마 (item 2) ──
+    if brief.get("themes"):
+        lines.append("🗓 오늘의 핵심 테마")
+        for th in brief["themes"][:5]:
+            lines.append(f"  • {th}")
+        lines.append("")
+
+    # ── 거시 + 세부 구성 (item 4) ──
     if macro.get("available"):
-        lines.append(f"🌍 거시 환경: {macro.get('label','측정불가')} "
-                     f"({macro.get('score',0):.0f}점)")
+        lines.append(f"🌍 거시 환경 {macro.get('score',0):.0f}점 "
+                     f"{_gauge(macro.get('score'))} ({macro.get('label','')})")
+        if mp:
+            lines.append(
+                f"  통화정책 {_z(mp.get('monetary'))}/25 · 경기 {_z(mp.get('economy'))}/30 · "
+                f"금융여건 {_z(mp.get('financial'))}/25 · 투자심리 {_z(mp.get('sentiment'))}/20")
     else:
-        lines.append("🌍 거시 환경: 측정불가 (FRED 키 미설정)")
+        lines.append("🌍 거시 환경: 측정 불가 (FRED 키 미설정)")
     macro_bits = []
     if mm.get("fedfunds") is not None:
         macro_bits.append(f"금리 {safe_num(mm.get('fedfunds'),2)}%")
     if mm.get("cpi_yoy") is not None:
-        macro_bits.append(f"CPI {safe_num(mm.get('cpi_yoy'),1)}%")
+        macro_bits.append(f"물가(CPI) {safe_num(mm.get('cpi_yoy'),1)}%")
+    if mm.get("dxy") is not None:
+        macro_bits.append(f"달러 {safe_num(mm.get('dxy'),1)}")
     if mm.get("vix") is not None:
-        macro_bits.append(f"VIX {safe_num(mm.get('vix'),1)}")
+        macro_bits.append(f"변동성(VIX) {safe_num(mm.get('vix'),1)}")
     if mm.get("fg_score") is not None:
-        macro_bits.append(f"F&G {safe_num(mm.get('fg_score'),0)}")
+        fgl = f"({mm.get('fg_label')})" if mm.get("fg_label") else ""
+        macro_bits.append(f"투자심리 {safe_num(mm.get('fg_score'),0)}{fgl}")
     if macro_bits:
-        lines.append("💰 " + " · ".join(macro_bits))
+        lines.append("  " + " · ".join(macro_bits))
 
-    # 섹터
-    top3 = sector.get("top3", [])
-    bot3 = sector.get("bottom3", [])
-    if top3:
+    # ── 현재 시장 상황 (item 3) ──
+    if regime.get("summary"):
         lines.append("")
-        lines.append("🔥 강한 섹터: " + " · ".join(
-            f"{s['label']} {pct(s['chg_5d'])}" for s in top3 if s.get("chg_5d") is not None))
-    if bot3:
-        lines.append("❄️ 약한 섹터: " + " · ".join(
-            f"{s['label']} {pct(s['chg_5d'])}" for s in bot3 if s.get("chg_5d") is not None))
-    if sector.get("defensive_strong"):
-        lines.append("⚠️ 방어섹터 강세 → 시장 위험 신호")
+        lines.append("🧭 현재 시장 상황")
+        lines.append(f"  국면 {_ko(_PHASE_KO, regime.get('phase'))} · "
+                     f"위험도 {_ko(_RISK_KO, regime.get('risk'))} · "
+                     f"유동성 {_ko(_LIQ_KO, regime.get('liquidity'))}")
+        rot_lines = _rotation_lines(detail)
+        if rot_lines:
+            lines.append("  💸 자금 이동")
+            lines += rot_lines
+    # 논리 일관성 (item 6)
+    if brief.get("consistency"):
+        lines.append(f"  ⚖️ {brief['consistency']}")
 
-    # 종목 (점수 내림차순)
+    # ── 섹터 강도 + 근거 (item 5) ──
+    if detail:
+        ranked = sorted(detail.values(),
+                        key=lambda d: (_RATING_RANK.get(d.get("rating"), 0),
+                                       d.get("score") or 0), reverse=True)
+        lines.append("")
+        lines.append("🔥 강한 업종 순위 (AI 분석) — 상위 5")
+        for d in ranked[:5]:
+            emo = _RATING_EMO.get(d.get("rating"), "")
+            bits = []
+            if d.get("rs_1m") is not None:
+                bits.append(f"상대강도 {pct(d['rs_1m'])}")
+            if d.get("trend"):
+                bits.append(_ko(_TREND_KO, d["trend"]))
+            if d.get("momentum"):
+                bits.append(_ko(_MOM_KO, d["momentum"]))
+            if d.get("macro_fit"):
+                bits.append(_ko(_FIT_KO, d["macro_fit"]))
+            lines.append(f"  {emo} {d['label']} {_z(d.get('score'))}점 — "
+                         + " · ".join(bits))
+        # 하위 (상위 5와 겹치지 않게, 약한 순) — 종목이 약한 업종일 수도 있어 표시
+        weak = ranked[max(5, len(ranked) - 5):][::-1]
+        if weak:
+            lines.append("❄️ 약한 업종: " + " · ".join(
+                f"{_RATING_EMO.get(d.get('rating'),'')}{d['label']} {_z(d.get('score'))}점"
+                for d in weak))
+    if sector.get("defensive_strong"):
+        lines.append("⚠️ 방어 업종 강세 → 시장 경계 신호")
+
+    # ── 종목 (점수 내림차순) ──
     tickers = daily.get("tickers", {})
-    for sym in sorted(tickers, key=lambda s: tickers[s].get("score", 0), reverse=True):
-        t = tickers[sym]
-        lines.append(SUB)
-        lines.append(f"{t.get('grade','')} {sym} · {t.get('score',0):.0f}점 "
-                     f"→ {_sig_ko(t.get('signal',''))}")
-        cur = t.get("currency", "USD")
-        if t.get("current_price") is not None:
-            lines.append(f"현재가  {money(t['current_price'], cur)}")
-        if t.get("entry_price"):
-            lines.append(f"진입가  {money(t['entry_price'], cur)}")
-        if t.get("target_price"):
-            tp = f" ({pct(t['target_pct'])})" if t.get("target_pct") is not None else ""
-            lines.append(f"목표가  {money(t['target_price'], cur)}{tp}")
-        if t.get("stop_price"):
-            sp = f" ({pct(t['stop_pct'])})" if t.get("stop_pct") is not None else ""
-            lines.append(f"손절가  {money(t['stop_price'], cur)}{sp}")
-        if t.get("rr_ratio"):
-            lines.append(f"R:R    {t['rr_ratio']}")
-        catalyst = t.get("key_catalyst") or t.get("summary")
-        if catalyst:
-            lines.append(f"핵심: {catalyst}")
-        if t.get("risk_comment"):
-            lines.append(f"⚠️ {t['risk_comment']}")
-        d = t.get("days_to_earnings")
-        if d is not None and 0 <= d <= 3:
-            lines.append(f"⚠️ 어닝 발표 D-{d} 주의")
+    ordered = sorted(tickers, key=lambda s: tickers[s].get("score", 0), reverse=True)
+    for sym in ordered:
+        lines.append("")
+        lines.append(CARD_SEP)
+        lines += _format_ticker_block(sym, tickers[sym])
+
+    # ── 오늘의 실행 전략 + 한 줄 요약 ──
+    if brief.get("strategy"):
+        lines.append("")
+        lines.append("🎯 오늘의 전략")
+        for s in brief["strategy"][:3]:
+            lines.append(f"  • {s}")
+    if brief.get("summary"):
+        lines.append("")
+        lines.append(f"📝 {brief['summary']}")
 
     lines.append(BAR)
     return "\n".join(lines)
+
+
+def _format_ticker_block(sym: str, t: dict) -> list[str]:
+    """모바일 텔레그램용 종목 카드 (중간 상세 — 짧은 줄, 핵심만)."""
+    cur = t.get("currency", "USD")
+
+    # 헤더: ⭐ 회사명(심볼) · 점수 신호
+    name = t.get("name") or sym
+    head_name = f"{name} ({sym})" if name != sym else sym
+    lines = [f"⭐ {head_name} · {t.get('score', 0):.0f} {_sig_ko(t.get('signal', ''))}"]
+
+    # 현재가 (변화%)
+    if t.get("current_price") is not None:
+        chg = f"  ({pct(t['change_pct'])})" if t.get("change_pct") is not None else ""
+        lines.append(f"{money(t['current_price'], cur)}{chg}")
+
+    # 진입 / 목표 / 손절 (3줄, 통화기호 생략해 줄 짧게)
+    # 매매 대상(적극매수/매수/관망)만 표시 — 회피/중립엔 노이즈라 생략
+    tradeable = t.get("signal") in ("Strong Buy", "Buy", "Watch")
+    if tradeable and t.get("entry_price") and t.get("target_price"):
+        lines.append(f"🎯 매수가 {_lvl(t['entry_price'])}")
+        tp = f" ({pct(t['target_pct'])})" if t.get("target_pct") is not None else ""
+        lines.append(f"   목표가 {_lvl(t['target_price'])}{tp}")
+        stop_seg = f"   손절가 {_lvl(t.get('stop_price'))}"
+        if t.get("rr_ratio"):
+            stop_seg += f"  손익비 {t['rr_ratio']}"
+        lines.append(stop_seg)
+
+    # 점수 구성 (item 1: 항목별 점수 투명 표시)
+    sc = t.get("scores", {})
+    if sc:
+        lines.append(f"📊 기업가치 {_z(sc.get('fundamental'))} · 차트 {_z(sc.get('technical'))} · "
+                     f"업종 {_z(sc.get('sector'))} · 시장환경 {_z(sc.get('macro'))}")
+        # 점수 산출 근거 — 기여도(점수×비중) 합 → 보정 → 최종
+        contrib = []
+        for key, label in (("fundamental", "기업가치"), ("macro", "시장환경"),
+                           ("sector", "업종"), ("technical", "차트"),
+                           ("growth", "성장"), ("sentiment", "심리")):
+            v = sc.get(key)
+            if v is not None:
+                contrib.append(f"{label} {v * _SCORE_W[key]:.0f}")
+        base = t.get("base_score")
+        if contrib:
+            tail = (f" = 기본 {base} → 보정 → 최종 {t.get('score',0):.0f}"
+                    if base else "")
+            lines.append("🧮 " + " + ".join(contrib) + tail)
+
+    # AI 점수 보정 근거 — 기본 점수 → AI 점수 (AI가 점수를 바꿨을 때만)
+    adj = t.get("llm_adjustment")
+    if adj:
+        lines.append(f"🤖 기본 점수 {adj['mech']} → AI 보정 {t.get('score',0):.0f} "
+                     f"({adj['delta']:+d})")
+
+    # 의사결정 한 줄 (매수/관망/회피 근거)
+    emo, label, reasons = _decision_reasons(t)
+    if reasons:
+        lines.append(f"{emo} {label}: {' · '.join(reasons)}")
+
+    # 섹터 근거 (item 7) — 쉬운 한국어
+    sd = t.get("sector_detail")
+    if sd and sd.get("rating"):
+        seg = f"   ↳ 업종 {_ko(_RATING_KO, sd['rating'])}"
+        if sd.get("rs_1m") is not None:
+            seg += f" · 상대강도 {pct(sd['rs_1m'])}"
+        if sd.get("macro_fit"):
+            seg += f" · {_ko(_FIT_KO, sd['macro_fit'])}"
+        lines.append(seg)
+
+    # AI 핵심 (item 9: 2문장·120자 제한)
+    catalyst = t.get("key_catalyst") or t.get("summary")
+    if catalyst:
+        lines.append(f"💡 {_clip(catalyst)}")
+
+    # 매수/매도 타이밍 시그널 (RSI·볼린저·MACD·일목·주봉 과열)
+    buy_sig = t.get("buy_signals") or []
+    sell_sig = t.get("sell_signals") or []
+    if buy_sig:
+        lines.append("✅ 매수 신호: " + " · ".join(buy_sig[:3]))
+    if sell_sig:
+        lines.append("🔺 과열/매도 신호: " + " · ".join(sell_sig[:3]))
+
+    # AI 판단 코멘트(과열↔관망 등 연결) + 기계 리스크 항목
+    rc = t.get("risk_comment")
+    if rc:
+        lines.append(f"⚠️ {_clip(rc)}")
+    risks = t.get("risk_items") or []
+    if risks:
+        lines.append("   리스크: " + " · ".join(risks[:3]))
+
+    d = t.get("days_to_earnings")
+    if d is not None and 0 <= d <= 7:
+        lines.append(f"📅 어닝 D-{d}")
+    return lines
 
 
 # ---------- [2] 진입가 도달 ----------
@@ -548,6 +835,61 @@ def format_surge_alert(symbol: str, price: float, change_pct: float, t: dict) ->
             f"오늘 신호: {_sig_ko(t.get('signal',''))} ({t.get('score',0):.0f}점)"
             f"{entry_state}\n\n"
             f"[±5% 이상이면 LLM 긴급 분석 실행]\n[{_hm()} KST]")
+
+
+# ---------- [4b] 인트라데이 변화 분석 (1시간 누적) ----------
+
+
+def format_intraday_alert(symbol: str, base: dict, current: dict,
+                          llm: dict | None) -> str:
+    """1시간 인트라데이 스냅샷에서 '유의미한 변화' 감지 시 알림 메시지."""
+    cur_ccy = base.get("currency", "USD")
+    price = current.get("price")
+    chg = current.get("change_pct")
+    # 실시간가가 있으면 '현재가(변화율)', 없으면(뉴스 감시) '기준가'만
+    if chg is not None:
+        head = f"📈 {symbol} 변화 감지"
+        price_line = f"현재가: {money(price, cur_ccy)} ({pct(chg)})"
+    else:
+        head = f"🗞 {symbol} 신규 뉴스"
+        price_line = (f"기준가: {money(price, cur_ccy)}" if price is not None
+                      else "")
+    lines = [head, ""]
+    if price_line:
+        lines.append(price_line)
+    lines.append(f"트리거: {', '.join(current.get('triggers', [])) or '-'}")
+
+    # ETF 축별 한 줄(업종 우선)
+    links = current.get("etf") or {}
+    for axis, ko in (("industry", "업종ETF"), ("technology", "기술ETF"),
+                     ("market", "시장ETF")):
+        brs = links.get(axis) or []
+        if brs:
+            seg = ", ".join(f"{b.get('etf')} {pct(b.get('chg_1d')) if b.get('chg_1d') is not None else 'N/A'}"
+                            for b in brs[:2])
+            lines.append(f"{ko}: {seg}")
+
+    if current.get("new_news"):
+        lines.append("")
+        lines.append("🗞 새 뉴스:")
+        lines += [f'- "{h}"' for h in current["new_news"][:3]]
+
+    if llm:
+        lines.append("")
+        base_sig = base.get("signal", "")
+        new_sig = llm.get("signal") or base_sig
+        sig_part = _sig_ko(new_sig)
+        if new_sig and new_sig != base_sig:
+            sig_part = f"{_sig_ko(base_sig)} → {_sig_ko(new_sig)}"
+        lines.append(f"🤖 AI: {sig_part}"
+                     + (f" · {llm['action']}" if llm.get("action") else ""))
+        if llm.get("summary"):
+            lines.append(llm["summary"])
+        if llm.get("news_impact"):
+            lines.append(f"뉴스영향: {llm['news_impact']}")
+
+    lines += ["", f"[{_hm()} KST]"]
+    return "\n".join(lines)
 
 
 # ---------- [5] 긴급 LLM 분석 ----------

@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY watchlist.json ./watchlist.json
+COPY industry_etf_map.json ./industry_etf_map.json
 
 # 기본 실행: 스케줄러 모드 (장 마감 후 자동 실행)
 CMD ["python", "src/main.py", "--schedule"]

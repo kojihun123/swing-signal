@@ -40,15 +40,27 @@ def today_stamp() -> str:
     return now_market().strftime("%Y%m%d")
 
 
+def trading_day_key(dt: datetime | None = None) -> str:
+    """인트라데이 누적의 '거래일' 키 = 미국 동부(ET) 날짜 YYYYMMDD.
+
+    미국 세션(KST 밤~아침)이 한 키로 묶이고, ET 날짜가 바뀌면 자동으로
+    새 키가 되어 인트라데이 시계열이 초기화된다.
+    """
+    return (dt or now_market()).astimezone(MARKET_TZ).strftime("%Y%m%d")
+
+
 def load_watchlist(path: str = "watchlist.json") -> list[dict]:
     """watchlist.json에서 종목 항목을 로드.
 
-    두 가지 형식을 모두 지원한다.
-      1) 신규: {"tickers": [{"symbol": "NVDA", "sector_etf": "SOXX",
-                              "sector_name": "반도체"}, ...]}
-      2) 구버전: ["NVDA", "AAPL", ...]  (섹터 정보 없음 → None)
+    세 가지 형식을 모두 지원한다.
+      1) 신규: {"tickers": [{"symbol": "MU", "profile": {"country": "US",
+                              "industry": "Memory Semiconductor"}}, ...]}
+      2) 레거시: {"tickers": [{"symbol": "NVDA", "sector_etf": "SOXX",
+                               "sector_name": "반도체"}, ...]}
+      3) 최소: ["NVDA", "AAPL", ...]  (정보 없음 → None)
 
-    반환: [{"symbol": str, "sector_etf": str|None, "sector_name": str|None}, ...]
+    반환: [{"symbol": str, "profile": dict|None,
+            "sector_etf": str|None, "sector_name": str|None}, ...]
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"watchlist 파일을 찾을 수 없습니다: {path}")
@@ -67,12 +79,16 @@ def load_watchlist(path: str = "watchlist.json") -> list[dict]:
         if isinstance(it, str):
             sym = it.strip().upper()
             if sym:
-                out.append({"symbol": sym, "sector_etf": None, "sector_name": None})
+                out.append({"symbol": sym, "profile": None,
+                            "sector_etf": None, "sector_name": None})
         elif isinstance(it, dict):
             sym = str(it.get("symbol", "")).strip().upper()
             if sym:
+                prof = it.get("profile") if isinstance(it.get("profile"), dict) else None
                 out.append({
                     "symbol": sym,
+                    "name": (str(it["name"]).strip() if it.get("name") else None),
+                    "profile": prof,
                     "sector_etf": (str(it["sector_etf"]).strip().upper()
                                    if it.get("sector_etf") else None),
                     "sector_name": (str(it["sector_name"]).strip()
@@ -164,33 +180,55 @@ def is_options_expiry(d=None) -> bool:
     return d == third_friday(d.year, d.month)
 
 
-def is_market_open(dt: datetime | None = None) -> bool:
-    """미국 정규장 개장 여부 (ET 평일 09:30~16:00). 공휴일은 고려하지 않음."""
-    dt = dt or now_market()
-    dt = dt.astimezone(MARKET_TZ)
-    if dt.weekday() >= 5:            # 주말 제외
-        return False
-    minutes = dt.hour * 60 + dt.minute
-    return 9 * 60 + 30 <= minutes <= 16 * 60
-
-
 # ---------- 미국 전 세션 (데이마켓/프리/정규/애프터) ----------
 #
-# ET 기준 하루 흐름 (공휴일 미고려):
-#   04:00~09:30  프리마켓(pre)
-#   09:30~16:00  정규장(regular)
-#   16:00~20:00  애프터마켓(after)
-#   20:00~04:00  데이마켓/주간거래(daymarket, Blue Ocean 오버나잇)
-# 주말 휴장: 금 20:00 ET ~ 일 20:00 ET.
+# 우선순위: 토스증권 장운영 캘린더(공휴일·서머타임 자동) → 실패 시 ET 하드코딩.
+# 세션 매핑: dayMarket→daymarket, preMarket→pre, regularMarket→regular,
+#            afterMarket→after. 휴장이면 4세션 모두 null → closed.
 
-def current_session(dt: datetime | None = None) -> str:
-    """현재 미국 세션. 'pre'|'regular'|'after'|'daymarket'|'closed'."""
-    dt = (dt or now_market()).astimezone(MARKET_TZ)
-    wd = dt.weekday()                       # 월=0 ... 금=4, 토=5, 일=6
+_TOSS_SESS_MAP = {"dayMarket": "daymarket", "preMarket": "pre",
+                  "regularMarket": "regular", "afterMarket": "after"}
+_cal_cache: dict = {}    # market → (fetch_epoch, [(session, start_dt, end_dt)])
+
+
+def _toss_sessions(market: str = "US"):
+    """토스 캘린더 → [(session, start_dt, end_dt)] (1시간 캐시). 실패 시 None."""
+    import time as _t
+    now = _t.time()
+    hit = _cal_cache.get(market)
+    if hit and now - hit[0] < 3600:
+        return hit[1]
+    try:
+        import toss
+        if not toss.enabled():
+            return None
+        cal = toss.market_calendar(market)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(cal, dict):
+        return None
+    out = []
+    for day in cal.values():                      # 전일/당일/익일
+        if not isinstance(day, dict):
+            continue
+        for key, sess in _TOSS_SESS_MAP.items():
+            w = day.get(key)
+            if isinstance(w, dict) and w.get("startTime") and w.get("endTime"):
+                try:
+                    out.append((sess, datetime.fromisoformat(w["startTime"]),
+                                datetime.fromisoformat(w["endTime"])))
+                except ValueError:
+                    continue
+    _cal_cache[market] = (now, out)
+    return out
+
+
+def _session_hardcoded(dt: datetime) -> str:
+    """ET 하드코딩 세션(폴백, 공휴일 미고려)."""
+    dt = dt.astimezone(MARKET_TZ)
+    wd = dt.weekday()
     m = dt.hour * 60 + dt.minute
     PRE, OPEN, CLOSE, AFT = 4 * 60, 9 * 60 + 30, 16 * 60, 20 * 60
-
-    # 평일 주간 세션 (프리/정규/애프터)
     if wd < 5:
         if PRE <= m < OPEN:
             return "pre"
@@ -198,16 +236,31 @@ def current_session(dt: datetime | None = None) -> str:
             return "regular"
         if CLOSE <= m < AFT:
             return "after"
-
-    # 데이마켓(오버나잇) — 저녁 20:00~24:00
     if m >= AFT:
-        # 금(4)·토(5) 저녁은 주말 휴장 시작
         return "closed" if wd in (4, 5) else "daymarket"
-    # 데이마켓 — 새벽 00:00~04:00 (전날 저녁의 연장)
     if m < PRE:
-        # 토(5)·일(6) 새벽은 휴장
         return "closed" if wd in (5, 6) else "daymarket"
     return "closed"
+
+
+def current_session(dt: datetime | None = None) -> str:
+    """현재 미국 세션. 'pre'|'regular'|'after'|'daymarket'|'closed'.
+
+    토스 캘린더(공휴일·DST 자동) 우선, 사용 불가 시 ET 하드코딩 폴백.
+    """
+    dt = dt or now_market()
+    sessions = _toss_sessions("US")
+    if sessions:
+        for name, start, end in sessions:
+            if start <= dt < end:
+                return name
+        return "closed"
+    return _session_hardcoded(dt)
+
+
+def is_market_open(dt: datetime | None = None) -> bool:
+    """미국 정규장 개장 여부 (토스 캘린더 기준, 공휴일·서머타임 자동)."""
+    return current_session(dt) == "regular"
 
 
 # 세션명 → 한글 라벨

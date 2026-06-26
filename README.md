@@ -28,11 +28,11 @@ docker compose build
 # 4) 수동 실행
 docker compose run --rm stock-signal python src/full_analysis.py            # 풀 분석
 docker compose run --rm stock-signal python src/full_analysis.py --ticker NVDA
-docker compose run --rm stock-signal python src/price_monitor.py --force    # 감시 강제 1회
+docker compose run --rm stock-signal python src/intraday.py --force         # 인트라데이 강제 1회
 docker compose run --rm stock-signal python src/final_summary.py            # 마감 요약
 docker compose run --rm stock-signal python src/emergency_analyzer.py --ticker NVDA --trigger "주가 +5.8%"
 
-# 5) 스케줄러 가동 (22:30 풀분석 / 30분 감시 / 06:10 요약)
+# 5) 스케줄러 가동 (22:30 풀분석 / 1시간 인트라데이 / 06:10 요약)
 docker compose up -d && docker compose logs -f
 ```
 

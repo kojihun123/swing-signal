@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 import pandas as pd
 import yfinance as yf
 
+import kis
+import naver
+import toss
+
 # yfinance 1.4.x는 curl_cffi가 설치돼 있으면 내부적으로 브라우저를
 # 임퍼소네이트해 Yahoo rate limit(Too Many Requests)을 완화한다.
 
@@ -275,36 +279,116 @@ def fetch_earnings(ticker: str, tk: "yf.Ticker", fund: dict) -> dict:
     return out
 
 
-def collect(ticker: str, retries: int = 3, base_pause: float = 2.0) -> StockData:
-    """한 종목의 일봉/주봉/펀더멘탈/실적을 수집. rate limit 시 지수 백오프."""
-    last_err = None
+def _merge_fundamentals(kfund: dict, yf_fund: dict, ticker: str = "") -> dict:
+    """yfinance 펀더멘털에 KIS 값(있으면)을 덮어쓴다(KIS 우선).
+
+    KIS 제공 → 덮어씀: per, pbr, eps, market_cap, week52_high/low
+    KIS 미제공 → yfinance 유지: forward_pe, psr, peg, roe, roa, 성장률,
+                마진, 애널리스트 목표가/투자의견, 어닝 등.
+    """
+    fund = dict(yf_fund or {})
+    for k in ("per", "pbr", "eps", "market_cap", "week52_high", "week52_low"):
+        v = (kfund or {}).get(k)
+        if v is not None:
+            fund[k] = v
+    if not fund.get("name"):
+        fund["name"] = ticker
+    if not fund.get("sector") and (kfund or {}).get("sector"):
+        fund["sector"] = kfund["sector"]
+    return fund
+
+
+def _yf_history_retry(ticker: str, period: str, interval: str,
+                      retries: int, base_pause: float) -> pd.DataFrame:
+    """yfinance OHLCV 폴백(KIS 실패 시). rate limit 지수 백오프."""
     for attempt in range(retries + 1):
         try:
-            tk = _ticker(ticker)
-            daily = fetch_history(ticker, period="300d", interval="1d", tk=tk).tail(200)
-            weekly = fetch_history(ticker, period="1y", interval="1wk", tk=tk).tail(52)
-            if daily.empty:
-                raise ValueError("일봉 데이터가 비어 있음")
-            fund, raw = fetch_fundamentals(ticker, tk)
-            try:
-                fund.update(fetch_income_items(tk))
-            except Exception:
-                pass
-            try:
-                earnings = fetch_earnings(ticker, tk, fund)
-            except Exception as ee:  # noqa: BLE001
-                print(f"[수집] {ticker} 실적 데이터 일부 실패: {ee}")
-                earnings = {}
-            return StockData(ticker=ticker, daily=daily, weekly=weekly,
-                             info=fund, raw=raw, earnings=earnings)
+            df = fetch_history(ticker, period=period, interval=interval)
+            if not df.empty:
+                return df
         except Exception as e:  # noqa: BLE001
-            last_err = str(e)
+            msg = str(e)
             if attempt < retries:
                 wait = base_pause * (2 ** attempt)
-                if "Too Many" in last_err or "Rate" in last_err:
+                if "Too Many" in msg or "Rate" in msg:
                     wait = max(wait, 10.0)
                 time.sleep(wait)
-    return StockData(ticker=ticker, error=last_err or "알 수 없는 오류")
+    return pd.DataFrame()
+
+
+def collect(ticker: str, retries: int = 3, base_pause: float = 2.0) -> StockData:
+    """한 종목 수집 (KIS 우선).
+
+    · 일/주봉 OHLCV: KIS → 실패 시 yfinance
+    · 펀더멘털: KIS(PER/EPS/PBR/시총/52주) + yfinance(ROE/성장률/애널리스트/어닝)
+    KIS가 OHLCV를 주면 yfinance가 rate limit이어도 종목이 분석에서 누락되지 않는다.
+    """
+    # ① OHLCV — 토스 우선 → 네이버 → KIS → yfinance 폴백
+    daily = toss.ohlcv(ticker, "D", 220)
+    if daily.empty:
+        daily = naver.ohlcv(ticker, "D", 220)
+    if daily.empty:
+        daily = kis.daily_ohlcv(ticker, "D", 220)
+    if daily.empty:
+        daily = _yf_history_retry(ticker, "300d", "1d", retries, base_pause)
+    weekly = toss.ohlcv(ticker, "W", 60)
+    if weekly.empty:
+        weekly = naver.ohlcv(ticker, "W", 60)
+    if weekly.empty:
+        weekly = kis.daily_ohlcv(ticker, "W", 60)
+    if weekly.empty:
+        weekly = _yf_history_retry(ticker, "1y", "1wk", retries, base_pause)
+    daily, weekly = daily.tail(200), weekly.tail(52)
+    if daily.empty:
+        return StockData(ticker=ticker,
+                         error="일봉 데이터 없음 (KIS·yfinance 모두 실패)")
+
+    # ② 펀더멘털 — KIS 기본 + yfinance 보완
+    kfund = kis.fundamentals(ticker) or {}
+    tk = _ticker(ticker)
+    try:
+        yf_fund, raw = fetch_fundamentals(ticker, tk)
+    except Exception:  # noqa: BLE001
+        yf_fund, raw = {}, {}
+    raw = dict(raw or {})
+    # 통화는 시장 기준으로 확정 (KIS·yfinance 모두 실패해도 KR→KRW 보장)
+    if not raw.get("currency"):
+        raw["currency"] = (kfund.get("currency")
+                           or ("KRW" if ticker.upper().endswith((".KS", ".KQ"))
+                               else "USD"))
+    fund = _merge_fundamentals(kfund, yf_fund, ticker)
+    # 목표주가 컨센서스: 네이버(한국어 소스) 우선, 실패 시 yfinance 값 유지
+    try:
+        nv = naver.consensus(ticker)
+    except Exception:  # noqa: BLE001
+        nv = None
+    if nv and nv.get("target_mean"):
+        fund["target_mean"] = nv["target_mean"]
+        if nv.get("target_high"):
+            fund["target_high"] = nv["target_high"]
+        if nv.get("target_low"):
+            fund["target_low"] = nv["target_low"]
+        if nv.get("recommendation_mean") is not None:
+            fund["recommendation_mean"] = nv["recommendation_mean"]
+            fund["recommendation"] = nv["recommendation"]
+        fund["target_source"] = "naver"
+        try:
+            px = float(daily["Close"].iloc[-1])
+            if px > 0:
+                fund["upside"] = (nv["target_mean"] / px - 1) * 100
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        fund.update(fetch_income_items(tk))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        earnings = fetch_earnings(ticker, tk, fund)
+    except Exception as ee:  # noqa: BLE001
+        print(f"[수집] {ticker} 실적 데이터 일부 실패: {ee}")
+        earnings = {}
+    return StockData(ticker=ticker, daily=daily, weekly=weekly,
+                     info=fund, raw=raw, earnings=earnings)
 
 
 def collect_all(tickers: list[str], pause: float = 1.5) -> dict[str, StockData]:

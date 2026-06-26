@@ -3,8 +3,13 @@
 기본 가중치
   Macro 0.20 + Sector 0.15 + Fundamental 0.25 + Growth 0.10
   + Technical 0.15 + Sentiment 0.10
+
+ETF 영향력 4축(sector.market_links) 반영
+  · industry  → Sector 컴포넌트(0.15) + ±5 가산  (대표 모멘텀)
+  · technology+market → 레짐 곱하기 보정 ×0.94~1.05 (시장 우호/비우호)
+  · country   → KR 종목 한정 ±2 (EWY 강약 = 코리아 디스카운트)
 외부 보정
-  거시환경 보정계수 ×0.75~1.0 · 섹터 ±5 · 리스크 감점 · 재무위험 -15
+  거시 ×0.75~1.0 · 레짐 ×0.94~1.05 · 섹터 ±5 · 국가 ±2 · 리스크/재무 감점
 """
 from __future__ import annotations
 
@@ -36,10 +41,13 @@ class StockResult:
     risk: dict = field(default_factory=dict)
     news: list = field(default_factory=list)
     llm: dict | None = None
+    kr_extra: dict = field(default_factory=dict)   # KR 부가데이터(수급·공매도·리포트)
+    market_context: dict = field(default_factory=dict)  # 거시 레짐 + 섹터 평가 묶음
     # 점수
     component_scores: dict = field(default_factory=dict)
     base_score: float = 0.0
     final_score: float = 0.0
+    mech_score: float | None = None   # LLM 보정 전 기계점수(보정 근거 표시용)
     grade: dict = field(default_factory=dict)   # {stars, en, ko}
     levels: dict = field(default_factory=dict)
     error: str | None = None
@@ -53,13 +61,68 @@ class StockResult:
         return self.grade.get("en", "Avoid")
 
 
+# 레짐/국가 보정 임계(±%) 와 강도
+_REGIME_TH = 1.5
+_COUNTRY_TH = 1.5
+
+
+def _axis_briefs(sector: dict | None, axis: str) -> list[dict]:
+    return ((sector or {}).get("market_links") or {}).get(axis) or []
+
+
+def _axis_avg_chg5d(sector: dict | None, axis: str) -> float | None:
+    """축(axis) ETF들의 5일 수익률 평균. 값 없으면 None."""
+    vals = [b["chg_5d"] for b in _axis_briefs(sector, axis)
+            if b.get("chg_5d") is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _axis_rank_pct(sector: dict | None, axis: str) -> float | None:
+    """축 ETF들의 5일 순위 백분위 평균(1=가장 강함). 값 없으면 None."""
+    pcts = []
+    for b in _axis_briefs(sector, axis):
+        r, t = b.get("rank_5d"), b.get("total")
+        if r and t:
+            pcts.append((t - r + 1) / t)
+    return sum(pcts) / len(pcts) if pcts else None
+
+
 def _sector_score(sector: dict | None) -> float:
-    if not sector:
-        return 50.0
-    rank, total = sector.get("rank_5d"), sector.get("total")
+    """Sector 컴포넌트(0~100) = 업종(industry) 축 ETF 5일순위 백분위."""
+    pct = _axis_rank_pct(sector, "industry")
+    if pct is not None:
+        return round(100.0 * pct, 1)
+    # 폴백: 대표 업종 ETF 단일 순위(market_links 없을 때)
+    rank, total = (sector or {}).get("rank_5d"), (sector or {}).get("total")
     if rank and total:
         return round(100.0 * (total - rank + 1) / total, 1)
     return 50.0
+
+
+def _regime_mult(sector: dict | None) -> float:
+    """technology+market 축 5일 흐름 기반 레짐 곱하기 보정(×0.94~1.05).
+
+    시장(SPY)·기술(QQQ/XLK)이 강세면 우호적 레짐 → 소폭 가점, 약세면 감점.
+    거시(macro_mult)가 펀더멘털 배경이라면, 이쪽은 단기 시세(테이프) 신호.
+    """
+    mult = 1.0
+    mkt = _axis_avg_chg5d(sector, "market")
+    if mkt is not None:
+        mult *= 1.03 if mkt >= _REGIME_TH else 0.97 if mkt <= -_REGIME_TH else 1.0
+    tech = _axis_avg_chg5d(sector, "technology")
+    if tech is not None:
+        mult *= 1.02 if tech >= _REGIME_TH else 0.98 if tech <= -_REGIME_TH else 1.0
+    return round(mult, 4)
+
+
+def _country_adj(sector: dict | None) -> float:
+    """KR 종목 한정: 국가(EWY) 5일 강약 ±2점."""
+    if (sector or {}).get("country_code") != "KR":
+        return 0.0
+    ewy = _axis_avg_chg5d(sector, "country")
+    if ewy is None:
+        return 0.0
+    return 2.0 if ewy >= _COUNTRY_TH else -2.0 if ewy <= -_COUNTRY_TH else 0.0
 
 
 def compute(result: StockResult) -> StockResult:
@@ -89,12 +152,20 @@ def compute(result: StockResult) -> StockResult:
     base = sum(comp[k] * w for k, w in WEIGHTS.items())
     result.base_score = round(base, 1)
 
-    # 외부 보정
+    # 외부 보정 (ETF 4축 + 리스크)
     sector_adj = float((result.sector or {}).get("adj", 0) or 0)
+    regime_mult = _regime_mult(result.sector)
+    country_adj = _country_adj(result.sector)
     risk_ded = float((result.risk or {}).get("deduction", 0) or 0)
     fin_ded = float((result.fundamental.get("risk", {}) or {}).get("deduction", 0) or 0)
 
-    final = base * macro_mult + sector_adj + risk_ded + fin_ded
+    # 산출 근거를 sector dict에 남겨 리포트/LLM에서 참조
+    if result.sector is not None:
+        result.sector["regime_mult"] = regime_mult
+        result.sector["country_adj"] = country_adj
+
+    final = (base * macro_mult * regime_mult
+             + sector_adj + country_adj + risk_ded + fin_ded)
     final = max(0.0, min(100.0, final))
     result.final_score = round(final, 1)
     result.grade = grade_for(final)

@@ -241,13 +241,26 @@ def latest_price(symbol: str, prepost: bool = True) -> float | None:
 
 
 def base_price(symbol: str, prepost: bool = True) -> float | None:
-    """풀 분석 기준가(장 시작가급): 파이낸셜(yfinance) 최신가 — 크롤(CNBC) 미사용.
+    """풀 분석 기준가(장 시작가급): 공식 API 최신가 — 크롤(CNBC) 미사용.
 
-    yfinance(시간외 포함 1분봉 최신가 → 일봉 종가) 우선, 실패 시 Finnhub.
-    Finnhub 무료 quote는 시간외를 안 잡아 정규 종가만 주므로(예: 195.74),
-    시간외까지 반영하는 yfinance 최신가(예: 194.80)를 기준가로 쓴다.
-    실시간 감시(get_realtime)만 크롤(CNBC)을 쓴다(사용자 정책).
+    토스(한미 통일 현재가) 우선 → KIS → yfinance → Finnhub.
     """
+    try:
+        import toss
+        if toss.enabled():
+            p = toss.price(symbol)
+            if p:
+                return p
+    except Exception as e:  # noqa: BLE001
+        print(f"[시세] {symbol} 토스 기준가 실패: {e}")
+    try:
+        import kis
+        if kis.enabled():
+            q = kis.quote(symbol)
+            if q and q.get("price"):
+                return q["price"]
+    except Exception as e:  # noqa: BLE001
+        print(f"[시세] {symbol} KIS 기준가 실패: {e}")
     p = _yf_intraday_price(symbol, prepost)
     if p is not None:
         return p
