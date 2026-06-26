@@ -91,6 +91,8 @@ _DEF_ETF = {"XLU", "XLP", "XLV", "XLRE"}
 # 종합점수 가중치 (scorer.WEIGHTS와 동일 — 점수 산출 근거 표시용)
 _SCORE_W = {"macro": 0.20, "sector": 0.15, "fundamental": 0.25,
             "growth": 0.10, "technical": 0.15, "sentiment": 0.10}
+_SCORE_W_ETF = {"macro": 0.25, "sector": 0.35, "fundamental": 0.0,
+                "growth": 0.0, "technical": 0.30, "sentiment": 0.10}
 
 
 # ---------- 컴포넌트 근거 ----------
@@ -573,123 +575,188 @@ def _decision_reasons(t: dict) -> tuple[str, str, list[str]]:
     return "🔴", "회피근거", [f"{n} 약세" for n in weak[:3]] or ["종합 부진"]
 
 
+_RISK_EN = {"Risk-On": "Risk ON", "Neutral": "Neutral", "Risk-Off": "Risk OFF"}
+_PANEL_SHORT = {"SPY": "SPY", "QQQ": "QQQ", "IWM": "IWM", "DIA": "DIA",
+                "TLT": "TLT", "IEF": "IEF", "HYG": "HYG", "LQD": "LQD",
+                "UUP": "USD", "^VIX": "VIX", "GLD": "GLD", "069500.KS": "KOSPI"}
+_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+_PICK_SIGNALS = ("Strong Buy", "Buy", "Watch")
+PICKS_CAP = 8
+
+
+def _market_health(macro: dict, regime: dict, detail: dict) -> tuple[int, str, str]:
+    """거시 + 시장 레짐 + 섹터 폭을 합성한 시장 건강도(0~100)·위험라벨·색이모지.
+
+    health = 0.5·거시점수 + 0.3·섹터폭 + 0.2·레짐(Risk-On 75/중립 50/Off 25).
+    거시 미측정 시 섹터폭·레짐만으로 산출. 섹터폭 = score≥50 섹터 비율.
+    """
+    macro_s = float(macro.get("score") or 50)
+    scored = [d.get("score") for d in (detail or {}).values()
+              if d.get("score") is not None]
+    breadth = (100.0 * sum(1 for s in scored if s >= 50) / len(scored)
+               if scored else 50.0)
+    risk = (regime or {}).get("risk")
+    regime_s = {"Risk-On": 75, "Risk-Off": 25}.get(risk, 50)
+    if macro.get("available"):
+        health = 0.5 * macro_s + 0.3 * breadth + 0.2 * regime_s
+    else:
+        health = 0.6 * breadth + 0.4 * regime_s
+    health = int(max(0, min(100, round(health))))
+    emo = "🟢" if health >= 70 else "🟡" if health >= 50 else "🔴"
+    return health, _RISK_EN.get(risk, "Neutral"), emo
+
+
+def _summary_lines(brief: dict, macro: dict, regime: dict, detail: dict) -> list[str]:
+    """AI 요약 3줄. LLM 테마가 있으면 우선, 없으면 기계적으로 구성."""
+    if brief.get("themes"):
+        return [str(t) for t in brief["themes"][:3]]
+    out = []
+    ph = _ko(_PHASE_KO, (regime or {}).get("phase"))
+    rk = _ko(_RISK_KO, (regime or {}).get("risk"))
+    head = " · ".join(x for x in (f"거시 {_z(macro.get('score'))}점", ph, rk) if x.strip())
+    if head:
+        out.append(head)
+    ranked = sorted([d for d in (detail or {}).values() if d.get("score") is not None],
+                    key=lambda d: d.get("score") or 0, reverse=True)
+    if ranked:
+        out.append("강한 업종: " + " · ".join(d["label"] for d in ranked[:3]))
+        out.append("약한 업종: " + " · ".join(d["label"] for d in ranked[-2:][::-1]))
+    return out[:3]
+
+
+def _dashboard_lines(panel: list, per_line: int = 4) -> list[str]:
+    """벤치마크 패널 → 'SYM ▲' 토큰들 (5일 추세 기준). per_line개씩 줄바꿈."""
+    toks = []
+    for p in panel:
+        sym = p.get("symbol", "")
+        short = _PANEL_SHORT.get(sym) or sym.lstrip("^").split(".")[0]
+        c5 = p.get("chg_5d")
+        arrow = "▲" if (c5 or 0) > 0.5 else "▼" if (c5 or 0) < -0.5 else "→"
+        toks.append(f"{short} {arrow}")
+    return ["   ".join(toks[i:i + per_line]) for i in range(0, len(toks), per_line)]
+
+
+def _money_flow(detail: dict) -> str:
+    """자금 흐름 한 줄: 약한 업종 → 강한 업종 (유출→유입)."""
+    scored = [d for d in (detail or {}).values() if d.get("score") is not None]
+    if not scored:
+        return ""
+    ranked = sorted(scored, key=lambda d: d.get("score") or 0, reverse=True)
+    strong = [d["label"] for d in ranked if (d.get("score") or 0) >= 58][:2]
+    weak = [d["label"] for d in ranked[::-1] if (d.get("score") or 0) <= 48][:2]
+    if strong and weak:
+        return f"{' · '.join(weak)}  →  {' · '.join(strong)}"
+    if strong:
+        return "유입: " + " · ".join(strong)
+    return ""
+
+
+def _sector_ranking_lines(detail: dict) -> list[str]:
+    """섹터 강도 상위 5 (LLM 평가 우선 + 점수)."""
+    ranked = sorted([d for d in (detail or {}).values() if d.get("score") is not None],
+                    key=lambda d: (_RATING_RANK.get(d.get("rating"), 0),
+                                   d.get("score") or 0), reverse=True)
+    out = []
+    for i, d in enumerate(ranked[:5]):
+        emo = _RATING_EMO.get(d.get("rating"), "")
+        out.append(f"  {_CIRCLED[i]} {emo}{d['label']} {_z(d.get('score'))}")
+    return out
+
+
+def _today_line(brief: dict, detail: dict) -> str:
+    """오늘의 한 줄 전략. LLM이 있으면 그대로, 없으면 기계적 폴백."""
+    if brief.get("strategy"):
+        return str(brief["strategy"][0])
+    if brief.get("summary"):
+        return str(brief["summary"])
+    ranked = sorted([d for d in (detail or {}).values() if d.get("score") is not None],
+                    key=lambda d: d.get("score") or 0, reverse=True)
+    if ranked:
+        return f"{ranked[0]['label']} 등 강한 업종 눌림목 매수 · 약한 업종/과열 종목 회피"
+    return "관망 — 뚜렷한 주도 업종 부재"
+
+
+def _select_picks(tickers: dict) -> list[tuple]:
+    """매매 후보(적극매수/매수/관망)만 점수순으로 추려 상세 카드 대상으로."""
+    items = [(s, t) for s, t in tickers.items()
+             if t.get("signal") in _PICK_SIGNALS]
+    items.sort(key=lambda kv: kv[1].get("score", 0), reverse=True)
+    return items[:PICKS_CAP]
+
+
 def format_daily_report(daily: dict) -> str:
+    """대시보드형 일일 리포트 — 한눈 요약(상단) + 실행 픽 상세 카드(하단)."""
     macro = daily.get("macro", {})
     sector = daily.get("sector", {})
-    mm = macro.get("metrics", {})
-    mp = macro.get("parts", {})
     regime = macro.get("regime", {})
     brief = daily.get("market_brief") or {}
     detail = sector.get("detail", {})
-
-    lines = [BAR, f"📊 오늘의 분석 리포트 [{_md(daily.get('date'))}]", BAR]
-
-    # ── 오늘의 핵심 테마 (item 2) ──
-    if brief.get("themes"):
-        lines.append("🗓 오늘의 핵심 테마")
-        for th in brief["themes"][:5]:
-            lines.append(f"  • {th}")
-        lines.append("")
-
-    # ── 거시 + 세부 구성 (item 4) ──
-    if macro.get("available"):
-        lines.append(f"🌍 거시 환경 {macro.get('score',0):.0f}점 "
-                     f"{_gauge(macro.get('score'))} ({macro.get('label','')})")
-        if mp:
-            lines.append(
-                f"  통화정책 {_z(mp.get('monetary'))}/25 · 경기 {_z(mp.get('economy'))}/30 · "
-                f"금융여건 {_z(mp.get('financial'))}/25 · 투자심리 {_z(mp.get('sentiment'))}/20")
-    else:
-        lines.append("🌍 거시 환경: 측정 불가 (FRED 키 미설정)")
-    macro_bits = []
-    if mm.get("fedfunds") is not None:
-        macro_bits.append(f"금리 {safe_num(mm.get('fedfunds'),2)}%")
-    if mm.get("cpi_yoy") is not None:
-        macro_bits.append(f"물가(CPI) {safe_num(mm.get('cpi_yoy'),1)}%")
-    if mm.get("dxy") is not None:
-        macro_bits.append(f"달러 {safe_num(mm.get('dxy'),1)}")
-    if mm.get("vix") is not None:
-        macro_bits.append(f"변동성(VIX) {safe_num(mm.get('vix'),1)}")
-    if mm.get("fg_score") is not None:
-        fgl = f"({mm.get('fg_label')})" if mm.get("fg_label") else ""
-        macro_bits.append(f"투자심리 {safe_num(mm.get('fg_score'),0)}{fgl}")
-    if macro_bits:
-        lines.append("  " + " · ".join(macro_bits))
-
-    # ── 현재 시장 상황 (item 3) ──
-    if regime.get("summary"):
-        lines.append("")
-        lines.append("🧭 현재 시장 상황")
-        lines.append(f"  국면 {_ko(_PHASE_KO, regime.get('phase'))} · "
-                     f"위험도 {_ko(_RISK_KO, regime.get('risk'))} · "
-                     f"유동성 {_ko(_LIQ_KO, regime.get('liquidity'))}")
-        rot_lines = _rotation_lines(detail)
-        if rot_lines:
-            lines.append("  💸 자금 이동")
-            lines += rot_lines
-    # 논리 일관성 (item 6)
-    if brief.get("consistency"):
-        lines.append(f"  ⚖️ {brief['consistency']}")
-
-    # ── 섹터 강도 + 근거 (item 5) ──
-    if detail:
-        ranked = sorted(detail.values(),
-                        key=lambda d: (_RATING_RANK.get(d.get("rating"), 0),
-                                       d.get("score") or 0), reverse=True)
-        lines.append("")
-        lines.append("🔥 강한 업종 순위 (AI 분석) — 상위 5")
-        for d in ranked[:5]:
-            emo = _RATING_EMO.get(d.get("rating"), "")
-            bits = []
-            if d.get("rs_1m") is not None:
-                bits.append(f"상대강도 {pct(d['rs_1m'])}")
-            if d.get("trend"):
-                bits.append(_ko(_TREND_KO, d["trend"]))
-            if d.get("momentum"):
-                bits.append(_ko(_MOM_KO, d["momentum"]))
-            if d.get("macro_fit"):
-                bits.append(_ko(_FIT_KO, d["macro_fit"]))
-            lines.append(f"  {emo} {d['label']} {_z(d.get('score'))}점 — "
-                         + " · ".join(bits))
-        # 하위 (상위 5와 겹치지 않게, 약한 순) — 종목이 약한 업종일 수도 있어 표시
-        weak = ranked[max(5, len(ranked) - 5):][::-1]
-        if weak:
-            lines.append("❄️ 약한 업종: " + " · ".join(
-                f"{_RATING_EMO.get(d.get('rating'),'')}{d['label']} {_z(d.get('score'))}점"
-                for d in weak))
-    if sector.get("defensive_strong"):
-        lines.append("⚠️ 방어 업종 강세 → 시장 경계 신호")
-
-    # ── 종목 (점수 내림차순) ──
+    panel = daily.get("market_panel") or []
     tickers = daily.get("tickers", {})
-    ordered = sorted(tickers, key=lambda s: tickers[s].get("score", 0), reverse=True)
-    for sym in ordered:
-        lines.append("")
-        lines.append(CARD_SEP)
-        lines += _format_ticker_block(sym, tickers[sym])
+    mm = macro.get("metrics", {})
 
-    # ── 오늘의 실행 전략 + 한 줄 요약 ──
-    if brief.get("strategy"):
-        lines.append("")
-        lines.append("🎯 오늘의 전략")
-        for s in brief["strategy"][:3]:
-            lines.append(f"  • {s}")
-    if brief.get("summary"):
-        lines.append("")
-        lines.append(f"📝 {brief['summary']}")
+    health, risk_label, emo = _market_health(macro, regime, detail)
+    lines = [BAR, f"📊 오늘의 분석 [{_md(daily.get('date'))}]", BAR]
 
-    lines.append(BAR)
+    # ① Market Health
+    lines.append(f"{emo} Market Health  {health}/100  ·  {risk_label}")
+    hbits = []
+    if mm.get("fedfunds") is not None:
+        hbits.append(f"금리 {safe_num(mm.get('fedfunds'),2)}%")
+    if mm.get("cpi_yoy") is not None:
+        hbits.append(f"CPI {safe_num(mm.get('cpi_yoy'),1)}%")
+    if mm.get("vix") is not None:
+        hbits.append(f"VIX {safe_num(mm.get('vix'),1)}")
+    if mm.get("fg_score") is not None:
+        hbits.append(f"심리 {safe_num(mm.get('fg_score'),0)}")
+    if hbits:
+        lines.append("  " + " · ".join(hbits))
+
+    # ② AI Summary
+    summ = _summary_lines(brief, macro, regime, detail)
+    if summ:
+        lines += [BAR, "🧠 AI 요약"] + [f"  {s}" for s in summ]
+
+    # ③ Market Dashboard
+    if panel:
+        lines += [BAR, "📊 Market Dashboard"] + [f"  {ln}" for ln in _dashboard_lines(panel)]
+
+    # ④ Money Flow
+    mf = _money_flow(detail)
+    if mf:
+        lines += [BAR, "💰 Money Flow", f"  {mf}"]
+
+    # ⑤ Sector Ranking
+    sr = _sector_ranking_lines(detail)
+    if sr:
+        lines += [BAR, "🏆 Sector Ranking"] + sr
+        if sector.get("defensive_strong"):
+            lines.append("  ⚠️ 방어 업종 강세 — 시장 경계")
+
+    # ⑥ Top Picks (픽만 상세 카드)
+    picks = _select_picks(tickers)
+    lines += [BAR, f"⭐ Top Picks ({len(picks)})"]
+    if picks:
+        for sym, t in picks:
+            lines.append(CARD_SEP)
+            lines += _format_ticker_block(sym, t)
+    else:
+        lines.append("  조건 충족 종목 없음 — 전체 관망")
+
+    # ⑦ Today
+    lines += [BAR, "🎯 Today", f"  {_today_line(brief, detail)}", BAR]
     return "\n".join(lines)
-
 
 def _format_ticker_block(sym: str, t: dict) -> list[str]:
     """모바일 텔레그램용 종목 카드 (중간 상세 — 짧은 줄, 핵심만)."""
     cur = t.get("currency", "USD")
 
-    # 헤더: ⭐ 회사명(심볼) · 점수 신호
+    # 헤더: ⭐ 회사명(심볼) · 점수 신호  (ETF는 배지)
+    is_etf = t.get("asset_class") == "tradable_etf"
     name = t.get("name") or sym
     head_name = f"{name} ({sym})" if name != sym else sym
-    lines = [f"⭐ {head_name} · {t.get('score', 0):.0f} {_sig_ko(t.get('signal', ''))}"]
+    badge = "📦ETF " if is_etf else ""
+    lines = [f"⭐ {badge}{head_name} · {t.get('score', 0):.0f} {_sig_ko(t.get('signal', ''))}"]
 
     # 현재가 (변화%)
     if t.get("current_price") is not None:
@@ -711,16 +778,21 @@ def _format_ticker_block(sym: str, t: dict) -> list[str]:
     # 점수 구성 (item 1: 항목별 점수 투명 표시)
     sc = t.get("scores", {})
     if sc:
-        lines.append(f"📊 기업가치 {_z(sc.get('fundamental'))} · 차트 {_z(sc.get('technical'))} · "
-                     f"업종 {_z(sc.get('sector'))} · 시장환경 {_z(sc.get('macro'))}")
-        # 점수 산출 근거 — 기여도(점수×비중) 합 → 보정 → 최종
+        sw = _SCORE_W_ETF if is_etf else _SCORE_W
+        if is_etf:   # ETF는 펀더멘털 항목이 없으므로 차트/업종/시장환경만 표시
+            lines.append(f"📊 차트 {_z(sc.get('technical'))} · 업종 {_z(sc.get('sector'))} · "
+                         f"시장환경 {_z(sc.get('macro'))}")
+        else:
+            lines.append(f"📊 기업가치 {_z(sc.get('fundamental'))} · 차트 {_z(sc.get('technical'))} · "
+                         f"업종 {_z(sc.get('sector'))} · 시장환경 {_z(sc.get('macro'))}")
+        # 점수 산출 근거 — 기여도(점수×비중) 합 → 보정 → 최종 (비중 0 항목은 생략)
         contrib = []
         for key, label in (("fundamental", "기업가치"), ("macro", "시장환경"),
                            ("sector", "업종"), ("technical", "차트"),
                            ("growth", "성장"), ("sentiment", "심리")):
             v = sc.get(key)
-            if v is not None:
-                contrib.append(f"{label} {v * _SCORE_W[key]:.0f}")
+            if v is not None and sw[key] > 0:
+                contrib.append(f"{label} {v * sw[key]:.0f}")
         base = t.get("base_score")
         if contrib:
             tail = (f" = 기본 {base} → 보정 → 최종 {t.get('score',0):.0f}"
@@ -923,57 +995,75 @@ def format_emergency_alert(symbol: str, trigger: str, price: float,
 # ---------- [6] 장 마감 최종 요약 ----------
 
 
-def format_final_summary(daily: dict, emergency_log: dict | None = None) -> str:
+def _sig_emoji(sig: str) -> str:
+    if sig in ("Strong Buy", "Buy"):
+        return "🟢"
+    if sig == "Watch":
+        return "🟡"
+    return "🔴"
+
+
+def format_final_summary(daily: dict, emergency_log: dict | None = None,
+                         intraday_digest: str | None = None) -> str:
+    """대시보드형 마감 결산 — 진입 결과·신호 변경·최종 신호·인트라데이·내일 주의."""
     tickers = daily.get("tickers", {})
     emergency_log = emergency_log or {}
 
-    lines = [BAR, f"📋 오늘 마감 요약 [{_md(daily.get('date'))}]", BAR]
+    lines = [BAR, f"📋 마감 결산 [{_md(daily.get('date'))}]", BAR]
 
-    # 진입가 도달 / 미도달 (매수 신호 종목만)
+    # ① 진입 결과 (매수 신호 종목)
     buy_syms = [s for s, t in tickers.items()
                 if t.get("signal") in ("Strong Buy", "Buy")]
     reached = [(s, tickers[s]) for s in buy_syms if tickers[s].get("entry_reached")]
     waiting = [s for s in buy_syms if not tickers[s].get("entry_reached")]
+    lines.append("🎯 진입 결과")
     if reached:
-        lines.append("진입가 도달: " + " · ".join(
-            f"{s} ✅ {_hm_from(t.get('entry_reached_at'))}" for s, t in reached))
+        lines.append("  ✅ 도달  " + " · ".join(
+            f"{s} {_hm_from(t.get('entry_reached_at'))}" for s, t in reached))
     if waiting:
-        lines.append("미도달:      " + " · ".join(f"{s} ⏳" for s in waiting))
+        lines.append("  ⏳ 미도달  " + " · ".join(waiting))
+    if not buy_syms:
+        lines.append("  매수 신호 종목 없음")
 
-    # 신호 변경 (original_signal 대비)
+    # ② 신호 변경 (아침 대비)
     changes = []
     for s, t in tickers.items():
         orig = t.get("original_signal")
         if orig and orig != t.get("signal"):
-            note = ""
-            if s in emergency_log:
-                note = f" (긴급분석 {_hm_from(emergency_log[s].get('last_called_at'))})"
-            changes.append(f"  {s} {_sig_ko(orig)}→{_sig_ko(t['signal'])}{note}")
+            note = (f" (긴급분석 {_hm_from(emergency_log[s].get('last_called_at'))})"
+                    if s in emergency_log else "")
+            changes.append(f"  {s} {_sig_ko(orig)} → {_sig_ko(t['signal'])}{note}")
     if changes:
-        lines += ["", "신호 변경:"] + changes
+        lines += [BAR, "🔄 신호 변경"] + changes
 
-    # 최종 신호 (점수 내림차순)
-    lines += ["", "최종 신호:"]
-    for s in sorted(tickers, key=lambda x: tickers[x].get("score", 0), reverse=True):
+    # ③ 최종 신호 (점수순)
+    lines += [BAR, "🏁 최종 신호"]
+    ordered = sorted(tickers, key=lambda x: tickers[x].get("score", 0), reverse=True)
+    for i, s in enumerate(ordered):
         t = tickers[s]
-        lines.append(f"  {s:6} {t.get('score',0):>3.0f}점 {t.get('grade','')} "
+        rank = _CIRCLED[i] if i < len(_CIRCLED) else f"{i + 1}."
+        badge = "📦" if t.get("asset_class") == "tradable_etf" else ""
+        lines.append(f"  {rank} {_sig_emoji(t.get('signal',''))} {badge}{s} "
+                     f"{t.get('score',0):>3.0f} {t.get('grade','')} "
                      f"{_sig_ko(t.get('signal',''))}")
 
-    # 긴급 LLM 호출
+    # ④ 인트라데이 흐름
+    if intraday_digest:
+        lines += [BAR, "🌀 인트라데이 흐름", intraday_digest]
+
+    # ⑤ 긴급 LLM 호출
     if emergency_log:
         total = sum(e.get("call_count_today", 0) for e in emergency_log.values())
         if total:
-            lines += ["", f"긴급 LLM 호출: {total}회 "
-                          f"({', '.join(emergency_log.keys())})"]
+            lines += [BAR, f"🚨 긴급 분석 {total}회 ({', '.join(emergency_log.keys())})"]
 
-    # 내일 주의 (어닝 임박)
-    warns = []
-    for s, t in tickers.items():
-        d = t.get("days_to_earnings")
-        if d is not None and 0 <= d <= 2:
-            warns.append(f"{s} 어닝 발표 D-{d}")
+    # ⑥ 내일 주의 (어닝 임박)
+    warns = [f"{s} 어닝 D-{t['days_to_earnings']}"
+             for s, t in tickers.items()
+             if t.get("days_to_earnings") is not None
+             and 0 <= t["days_to_earnings"] <= 2]
     if warns:
-        lines += ["", "⚠️ 내일 주의", "  " + " · ".join(warns[:5])]
+        lines += [BAR, "⚠️ 내일 주의", "  " + " · ".join(warns[:5])]
 
-    lines += [f"[{_hm()} KST]", BAR]
+    lines += [BAR, f"[{_hm()} KST]"]
     return "\n".join(lines)

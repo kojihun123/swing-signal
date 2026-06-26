@@ -21,12 +21,23 @@ WEIGHTS = {
     "macro": 0.20, "sector": 0.15, "fundamental": 0.25,
     "growth": 0.10, "technical": 0.15, "sentiment": 0.10,
 }
+# ETF(tradable_etf) 전용 가중치 — 펀더멘털/성장 데이터가 없으므로 0으로 두고
+# 그 비중을 섹터(상대강도)·기술적·거시로 재분배(탑다운 + 테이프 중심).
+WEIGHTS_ETF = {
+    "macro": 0.25, "sector": 0.35, "fundamental": 0.0,
+    "growth": 0.0, "technical": 0.30, "sentiment": 0.10,
+}
+
+
+def weights_for(asset_class: str | None) -> dict:
+    return WEIGHTS_ETF if asset_class == "tradable_etf" else WEIGHTS
 
 
 @dataclass
 class StockResult:
     ticker: str
     name: str = ""
+    asset_class: str = "equity"   # equity | tradable_etf
     price: float = float("nan")
     currency: str = "USD"
     bench_label: str = "SPY"
@@ -149,7 +160,8 @@ def compute(result: StockResult) -> StockResult:
     }
     result.component_scores = {k: round(v, 1) for k, v in comp.items()}
 
-    base = sum(comp[k] * w for k, w in WEIGHTS.items())
+    weights = weights_for(result.asset_class)
+    base = sum(comp[k] * w for k, w in weights.items())
     result.base_score = round(base, 1)
 
     # 외부 보정 (ETF 4축 + 리스크)

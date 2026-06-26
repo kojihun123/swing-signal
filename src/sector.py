@@ -48,6 +48,9 @@ ETF_LABELS: dict[str, str] = {
     "FDN": "인터넷", "XLU": "유틸리티", "XLP": "필수소비재",
     "XLF": "금융", "XLE": "에너지", "XLV": "헬스케어", "XLI": "산업재",
     "XLB": "소재", "XLY": "임의소비재", "XLRE": "부동산",
+    "KBE": "은행", "IAI": "증권/IB", "IPAY": "결제", "XOP": "원유·가스E&P",
+    "PAVE": "인프라", "XAR": "항공우주·방산", "MOO": "농업",
+    "XPH": "제약", "IHF": "헬스케어서비스", "CARZ": "자동차",
 }
 
 # yfinance industry 문자열 → 내부 industry 라벨(테이블 키). 부분일치, 구체 우선.
@@ -482,6 +485,31 @@ class SectorAnalyzer:
                 "chg_5d": m.chg_5d, "chg_1m": m.chg_1m,
                 "vol_ratio": m.vol_ratio, "rsi": m.rsi,
                 "rank_5d": m.rank_5d, "total": m.total}
+
+    def for_etf(self, etf: str) -> dict:
+        """ETF 자체를 섹터 객체로 (tradable_etf 채점용).
+
+        업종(industry) 축 = ETF 자기 자신 → 섹터 컴포넌트가 그 ETF의 자기
+        상대강도/순위로 매겨진다. market 축엔 SPY를 넣어 레짐 보정이 동작한다.
+        반환 구조는 for_ticker와 동일(scorer/리포트 호환).
+        """
+        if not self._loaded:
+            self.load()
+        brief = self._brief(etf)
+        adj, m = self.adjustment(etf)
+        out = {
+            "label": ETF_LABELS.get(etf, etf), "etf": etf,
+            "country_code": "US", "adj": adj,
+            "market_links": {"country": [], "industry": [brief],
+                             "technology": [], "market": [self._brief("SPY")]},
+        }
+        if m is not None:
+            out.update({
+                "chg_1d": m.chg_1d, "chg_5d": m.chg_5d, "chg_1m": m.chg_1m,
+                "vol_ratio": m.vol_ratio, "rsi": m.rsi,
+                "rank_5d": m.rank_5d, "total": m.total,
+            })
+        return out
 
     def for_ticker(self, ticker: str, info: dict | None = None,
                    profile: dict | None = None,

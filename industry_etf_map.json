@@ -17,6 +17,35 @@
     "Robotics":             {"industry": ["BOTZ", "ARKQ"]},
     "Defense":              {"industry": ["ITA"]},
     "Fintech":              {"industry": ["FINX"]},
-    "Internet":             {"industry": ["FDN"]}
+    "Internet":             {"industry": ["FDN"]},
+
+    "GPU / AI":             {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+    "CPU / GPU":            {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+    "Foundry":              {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+    "Memory":               {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+    "Semiconductor Equipment":  {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+    "Semiconductor Inspection": {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+    "Networking / AI ASIC": {"industry": ["SOXX", "SMH"], "technology": ["XLK", "QQQ"]},
+
+    "Cloud / AI":           {"industry": ["SKYY", "IGV"],  "technology": ["VGT", "XLK"]},
+    "Consumer Electronics": {"industry": ["XLK"],          "technology": ["QQQ"]},
+    "E-Commerce / Cloud":   {"industry": ["XLY", "FDN"],   "technology": ["QQQ"]},
+    "Internet Platform":    {"industry": ["FDN"],          "technology": ["QQQ"]},
+    "Search / Cloud / AI":  {"industry": ["FDN"],          "technology": ["QQQ"]},
+
+    "Bank":                 {"industry": ["KBE", "XLF"]},
+    "Investment Bank":      {"industry": ["IAI", "XLF"]},
+    "Payment Network":      {"industry": ["IPAY", "XLF"]},
+
+    "Integrated Oil":       {"industry": ["XOP", "XLE"]},
+
+    "Heavy Equipment":      {"industry": ["XLI", "PAVE"]},
+    "Aerospace":            {"industry": ["XAR", "ITA"]},
+    "Agricultural Machinery": {"industry": ["MOO", "XLI"]},
+
+    "Pharmaceutical":       {"industry": ["XPH", "XLV"]},
+    "Health Insurance":     {"industry": ["IHF", "XLV"]},
+
+    "Automobile":           {"industry": ["CARZ", "XLY"]}
   }
 }

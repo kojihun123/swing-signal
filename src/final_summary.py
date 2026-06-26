@@ -48,7 +48,7 @@ def _intraday_digest(daily: dict) -> str:
             lines.append(f"    {ai['summary']}")
     if not lines:
         return ""
-    return "📊 오늘의 인트라데이\n" + "\n".join(lines)
+    return "\n".join(lines)
 
 
 def run_final_summary() -> None:
@@ -58,10 +58,8 @@ def run_final_summary() -> None:
         return
     emergency_log = load_data("emergency_log.json") or {}
 
-    msg = reporter.format_final_summary(daily, emergency_log)
-    digest = _intraday_digest(daily)
-    if digest:
-        msg += "\n\n" + digest
+    msg = reporter.format_final_summary(daily, emergency_log,
+                                        _intraday_digest(daily))
     print("\n" + msg + "\n")
     if reporter.telegram_enabled():
         reporter.send_telegram_message(msg)

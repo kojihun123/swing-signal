@@ -1,58 +1,93 @@
 {
   "tickers": [
     {
-      "symbol": "005930.KS",
-      "name": "삼성전자",
+      "symbol": "SPY",
+      "name": "SPDR S&P 500 ETF Trust",
       "profile": {
-        "country": "KR",
-        "sector": "Technology",
-        "industry": "Memory Semiconductor"
+        "country": "US",
+        "sector": "Market Index",
+        "industry": "S&P 500",
+        "asset_class": "context"
       }
     },
     {
-      "symbol": "000660.KS",
-      "name": "SK하이닉스",
+      "symbol": "QQQ",
+      "name": "Invesco QQQ Trust",
       "profile": {
-        "country": "KR",
-        "sector": "Technology",
-        "industry": "Memory Semiconductor"
+        "country": "US",
+        "sector": "Market Index",
+        "industry": "NASDAQ-100",
+        "asset_class": "context"
       }
     },
-
+    {
+      "symbol": "IWM",
+      "name": "iShares Russell 2000 ETF",
+      "profile": {
+        "country": "US",
+        "sector": "Market Index",
+        "industry": "Small Cap",
+        "asset_class": "context"
+      }
+    },
+    {
+      "symbol": "TLT",
+      "name": "iShares 20+ Year Treasury Bond ETF",
+      "profile": {
+        "country": "US",
+        "sector": "Bond ETF",
+        "industry": "Long-Term Treasury",
+        "asset_class": "context"
+      }
+    },
+    {
+      "symbol": "HYG",
+      "name": "iShares iBoxx High Yield Corporate Bond ETF",
+      "profile": {
+        "country": "US",
+        "sector": "Bond ETF",
+        "industry": "High Yield Bond",
+        "asset_class": "context"
+      }
+    },
+    {
+      "symbol": "UUP",
+      "name": "Invesco DB US Dollar Bullish Fund",
+      "profile": {
+        "country": "US",
+        "sector": "Currency ETF",
+        "industry": "US Dollar",
+        "asset_class": "context"
+      }
+    },
+    {
+      "symbol": "^VIX",
+      "name": "CBOE Volatility Index",
+      "profile": {
+        "country": "US",
+        "sector": "Volatility",
+        "industry": "Fear Index",
+        "asset_class": "context"
+      }
+    },
     {
       "symbol": "NVDA",
       "name": "NVIDIA",
       "profile": {
         "country": "US",
         "sector": "Technology",
-        "industry": "GPU / AI Accelerator"
+        "industry": "GPU / AI",
+        "asset_class": "equity"
       }
     },
     {
-      "symbol": "AMD",
-      "name": "Advanced Micro Devices",
+      "symbol": "TSM",
+      "name": "Taiwan Semiconductor Manufacturing",
       "profile": {
-        "country": "US",
+        "country": "TW",
         "sector": "Technology",
-        "industry": "CPU"
-      }
-    },
-    {
-      "symbol": "MU",
-      "name": "Micron Technology",
-      "profile": {
-        "country": "US",
-        "sector": "Technology",
-        "industry": "Memory Semiconductor"
-      }
-    },
-    {
-      "symbol": "AVGO",
-      "name": "Broadcom",
-      "profile": {
-        "country": "US",
-        "sector": "Technology",
-        "industry": "AI ASIC / Networking"
+        "industry": "Foundry",
+        "asset_class": "equity"
       }
     },
     {
@@ -61,112 +96,78 @@
       "profile": {
         "country": "NL",
         "sector": "Technology",
-        "industry": "Semiconductor Equipment"
+        "industry": "Semiconductor Equipment",
+        "asset_class": "equity"
       }
     },
     {
-      "symbol": "AMKR",
-      "name": "Amkor Technology",
+      "symbol": "MU",
+      "name": "Micron Technology",
       "profile": {
         "country": "US",
         "sector": "Technology",
-        "industry": "Semiconductor Packaging (OSAT)"
+        "industry": "Memory Semiconductor",
+        "asset_class": "equity"
       }
     },
-
-    {
-      "symbol": "LITE",
-      "name": "Lumentum Holdings",
-      "profile": {
-        "country": "US",
-        "sector": "Technology",
-        "industry": "Optical Communication"
-      }
-    },
-
     {
       "symbol": "MSFT",
       "name": "Microsoft",
       "profile": {
         "country": "US",
         "sector": "Technology",
-        "industry": "Cloud Computing"
+        "industry": "Cloud / AI",
+        "asset_class": "equity"
       }
     },
-
     {
-      "symbol": "PLTR",
-      "name": "Palantir Technologies",
+      "symbol": "AAPL",
+      "name": "Apple",
       "profile": {
         "country": "US",
         "sector": "Technology",
-        "industry": "AI Software"
+        "industry": "Consumer Electronics",
+        "asset_class": "equity"
       }
     },
-
     {
-      "symbol": "IONQ",
-      "name": "IonQ",
+      "symbol": "AMZN",
+      "name": "Amazon",
+      "profile": {
+        "country": "US",
+        "sector": "Consumer",
+        "industry": "E-Commerce / Cloud",
+        "asset_class": "equity"
+      }
+    },
+    {
+      "symbol": "META",
+      "name": "Meta Platforms",
       "profile": {
         "country": "US",
         "sector": "Technology",
-        "industry": "Quantum Computing"
+        "industry": "Internet Platform",
+        "asset_class": "equity"
       }
     },
-
     {
-      "symbol": "SPCX",
-      "name": "SpaceX",
+      "symbol": "JPM",
+      "name": "JPMorgan Chase",
       "profile": {
         "country": "US",
-        "sector": "Aerospace",
-        "industry": "Space Technology"
+        "sector": "Financial",
+        "industry": "Bank",
+        "asset_class": "equity"
       }
     },
-
     {
-      "symbol": "XLV",
-      "name": "Health Care Select Sector SPDR Fund",
+      "symbol": "CAT",
+      "name": "Caterpillar",
       "profile": {
         "country": "US",
-        "sector": "Healthcare ETF",
-        "industry": "Healthcare"
-      }
-    },
-    {
-      "symbol": "XBI",
-      "name": "SPDR S&P Biotech ETF",
-      "profile": {
-        "country": "US",
-        "sector": "Biotechnology ETF",
-        "industry": "Biotechnology"
-      }
-    },
-    {
-      "symbol": "ARKG",
-      "name": "ARK Genomic Revolution ETF",
-      "profile": {
-        "country": "US",
-        "sector": "Genomics ETF",
-        "industry": "Genomics"
-      }
-    },
-    {
-      "symbol": "URA",
-      "name": "Global X Uranium ETF",
-      "profile": {
-        "country": "Global",
-        "sector": "Uranium ETF",
-        "industry": "Nuclear Energy"
-      }
-    },
-    {
-      "symbol": "GDX",
-      "name": "VanEck Gold Miners ETF",
-      "profile": {
-        "country": "Global",
-        "sector": "Gold Mining ETF",
-        "industry": "Gold Miners"
+        "sector": "Industrial",
+        "industry": "Heavy Equipment",
+        "asset_class": "equity"
       }
     },
     {
@@ -175,16 +176,78 @@
       "profile": {
         "country": "US",
         "sector": "Energy ETF",
-        "industry": "Oil & Gas"
+        "industry": "Oil & Gas",
+        "asset_class": "tradable_etf"
       }
     },
     {
-      "symbol": "PAVE",
-      "name": "Global X U.S. Infrastructure Development ETF",
+      "symbol": "XLV",
+      "name": "Health Care Select Sector SPDR Fund",
       "profile": {
         "country": "US",
-        "sector": "Infrastructure ETF",
-        "industry": "Infrastructure"
+        "sector": "Healthcare ETF",
+        "industry": "Healthcare",
+        "asset_class": "tradable_etf"
+      }
+    },
+    {
+      "symbol": "GLD",
+      "name": "SPDR Gold Shares",
+      "profile": {
+        "country": "Global",
+        "sector": "Commodity ETF",
+        "industry": "Gold",
+        "asset_class": "tradable_etf"
+      }
+    },
+    {
+      "symbol": "COPX",
+      "name": "Global X Copper Miners ETF",
+      "profile": {
+        "country": "Global",
+        "sector": "Commodity ETF",
+        "industry": "Copper",
+        "asset_class": "tradable_etf"
+      }
+    },
+    {
+      "symbol": "URA",
+      "name": "Global X Uranium ETF",
+      "profile": {
+        "country": "Global",
+        "sector": "Commodity ETF",
+        "industry": "Uranium",
+        "asset_class": "tradable_etf"
+      }
+    },
+    {
+      "symbol": "069500.KS",
+      "name": "KODEX 200 ETF",
+      "profile": {
+        "country": "KR",
+        "sector": "Market Index",
+        "industry": "KOSPI 200",
+        "asset_class": "context"
+      }
+    },
+    {
+      "symbol": "005930.KS",
+      "name": "삼성전자",
+      "profile": {
+        "country": "KR",
+        "sector": "Technology",
+        "industry": "Memory Semiconductor",
+        "asset_class": "equity"
+      }
+    },
+    {
+      "symbol": "000660.KS",
+      "name": "SK하이닉스",
+      "profile": {
+        "country": "KR",
+        "sector": "Technology",
+        "industry": "Memory Semiconductor",
+        "asset_class": "equity"
       }
     }
   ]
