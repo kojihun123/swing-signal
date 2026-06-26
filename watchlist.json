@@ -1,6 +1,191 @@
 {
   "tickers": [
-    {"symbol": "005930.KS", "name": "삼성전자", "profile": {"country": "KR", "sector": "Technology", "industry": "Memory Semiconductor"}},
-    {"symbol": "MU", "name": "마이크론 테크놀로지", "profile": {"country": "US", "sector": "Technology", "industry": "Memory Semiconductor"}}
+    {
+      "symbol": "005930.KS",
+      "name": "삼성전자",
+      "profile": {
+        "country": "KR",
+        "sector": "Technology",
+        "industry": "Memory Semiconductor"
+      }
+    },
+    {
+      "symbol": "000660.KS",
+      "name": "SK하이닉스",
+      "profile": {
+        "country": "KR",
+        "sector": "Technology",
+        "industry": "Memory Semiconductor"
+      }
+    },
+
+    {
+      "symbol": "NVDA",
+      "name": "NVIDIA",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "GPU / AI Accelerator"
+      }
+    },
+    {
+      "symbol": "AMD",
+      "name": "Advanced Micro Devices",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "CPU"
+      }
+    },
+    {
+      "symbol": "MU",
+      "name": "Micron Technology",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "Memory Semiconductor"
+      }
+    },
+    {
+      "symbol": "AVGO",
+      "name": "Broadcom",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "AI ASIC / Networking"
+      }
+    },
+    {
+      "symbol": "ASML",
+      "name": "ASML Holding",
+      "profile": {
+        "country": "NL",
+        "sector": "Technology",
+        "industry": "Semiconductor Equipment"
+      }
+    },
+    {
+      "symbol": "AMKR",
+      "name": "Amkor Technology",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "Semiconductor Packaging (OSAT)"
+      }
+    },
+
+    {
+      "symbol": "LITE",
+      "name": "Lumentum Holdings",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "Optical Communication"
+      }
+    },
+
+    {
+      "symbol": "MSFT",
+      "name": "Microsoft",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "Cloud Computing"
+      }
+    },
+
+    {
+      "symbol": "PLTR",
+      "name": "Palantir Technologies",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "AI Software"
+      }
+    },
+
+    {
+      "symbol": "IONQ",
+      "name": "IonQ",
+      "profile": {
+        "country": "US",
+        "sector": "Technology",
+        "industry": "Quantum Computing"
+      }
+    },
+
+    {
+      "symbol": "SPCX",
+      "name": "SpaceX",
+      "profile": {
+        "country": "US",
+        "sector": "Aerospace",
+        "industry": "Space Technology"
+      }
+    },
+
+    {
+      "symbol": "XLV",
+      "name": "Health Care Select Sector SPDR Fund",
+      "profile": {
+        "country": "US",
+        "sector": "Healthcare ETF",
+        "industry": "Healthcare"
+      }
+    },
+    {
+      "symbol": "XBI",
+      "name": "SPDR S&P Biotech ETF",
+      "profile": {
+        "country": "US",
+        "sector": "Biotechnology ETF",
+        "industry": "Biotechnology"
+      }
+    },
+    {
+      "symbol": "ARKG",
+      "name": "ARK Genomic Revolution ETF",
+      "profile": {
+        "country": "US",
+        "sector": "Genomics ETF",
+        "industry": "Genomics"
+      }
+    },
+    {
+      "symbol": "URA",
+      "name": "Global X Uranium ETF",
+      "profile": {
+        "country": "Global",
+        "sector": "Uranium ETF",
+        "industry": "Nuclear Energy"
+      }
+    },
+    {
+      "symbol": "GDX",
+      "name": "VanEck Gold Miners ETF",
+      "profile": {
+        "country": "Global",
+        "sector": "Gold Mining ETF",
+        "industry": "Gold Miners"
+      }
+    },
+    {
+      "symbol": "XLE",
+      "name": "Energy Select Sector SPDR Fund",
+      "profile": {
+        "country": "US",
+        "sector": "Energy ETF",
+        "industry": "Oil & Gas"
+      }
+    },
+    {
+      "symbol": "PAVE",
+      "name": "Global X U.S. Infrastructure Development ETF",
+      "profile": {
+        "country": "US",
+        "sector": "Infrastructure ETF",
+        "industry": "Infrastructure"
+      }
+    }
   ]
 }

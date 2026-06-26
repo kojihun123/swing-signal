@@ -47,9 +47,9 @@ from sector import (ROTATION_ETFS, SectorAnalyzer,  # noqa: E402
                     macro_fit, momentum_label, needed_etfs, sector_score)
 from utils import load_watchlist, now_market, now_notify  # noqa: E402
 
-STOCK_DELAY = 5.0          # 종목 간 딜레이(초)
-LLM_DAILY_CAP = 18         # 무료 한도(20/일) 보호 (하드 상한)
-LLM_TOPN = 20              # 기계점수 상위 N개만 LLM 종합판단 (비용/확장성)
+STOCK_DELAY = 3.0          # 종목 간 딜레이(초) — 워치리스트 확장 대비 단축
+LLM_DAILY_CAP = 30         # LLM 호출 하드 상한 (Gemini+Groq 폴백으로 여유)
+LLM_TOPN = 30              # 기계점수 상위 N개만 LLM 종합판단 (비용/확장성)
 
 
 def _is_kr(sym: str) -> bool:
