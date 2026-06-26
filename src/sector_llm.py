@@ -45,6 +45,17 @@ def _macro_context(macro: dict | None) -> str:
     return f"환경 {label} · " + ", ".join(bits)
 
 
+def _ma_line(r: dict) -> str:
+    """120/200일선 위치(상향/근접/터치/하향)와 이격도(%) 요약."""
+    parts = []
+    for tag, pkey, dkey in (("120일선", "ma120_pos", "ma120_dist"),
+                            ("200일선", "ma200_pos", "ma200_dist")):
+        pos = r.get(pkey)
+        if pos:
+            parts.append(f"{tag} {pos}({_s(r.get(dkey),1,'%')})")
+    return " ".join(parts) if parts else "N/A"
+
+
 def _row_line(r: dict) -> str:
     ma = r.get("ma_alignment") or "N/A"
     above = ("200일선↑" if r.get("above_ma200")
@@ -57,8 +68,10 @@ def _row_line(r: dict) -> str:
         f"3개월 {_s(r.get('rs_3m'),1)} · "
         f"수익률 5일 {_s(r.get('chg_5d'),1,'%')}/1개월 {_s(r.get('chg_1m'),1,'%')}/"
         f"3개월 {_s(r.get('chg_3m'),1,'%')} · "
-        f"MA {ma} {above} · RSI {_s(r.get('rsi'),0)} · "
-        f"거래량 {_s(r.get('vol_ratio'),1,'배')} · 5일순위 {rank}"
+        f"MA {ma} {above} · {_ma_line(r)} · RSI {_s(r.get('rsi'),0)} · "
+        f"거래량 {_s(r.get('vol_ratio'),1,'배')}"
+        f"(1M {_s(r.get('vol_chg_1m'),0,'%')}/2M {_s(r.get('vol_chg_2m'),0,'%')}) · "
+        f"5일순위 {rank}"
     )
 
 
@@ -77,10 +90,14 @@ def build_prompt(rows: list[dict], macro: dict | None) -> str:
 
 [섹터 ETF 데이터] (SP500대비=상대강도, MA=이동평균 배열)
 {table}
+· 120/200일선: 현재가의 장기 추세선 대비 위치(상향/근접/터치/하향)와 이격도(%).
+  주요선 상향=추세 견고, 터치/근접=지지·저항 분기점, 하향=추세 훼손 신호.
+· 거래량(1M/2M): 최근 5일 평균 거래량이 1개월·2개월 평균 대비 증감(%).
+  큰 폭 증가는 자금유입·관심집중(추세 확인), 감소는 모멘텀 약화로 해석.
 
 각 항목을 종합적으로 고려해 평가하세요:
-① 상대강도(SP500 대비 1주/1개월/3개월) ② 추세(이동평균 배열) ③ 모멘텀(상승률·지속)
-④ 거래량(평균 대비 증가·자금유입) ⑤ 거시 적합도
+① 상대강도(SP500 대비 1주/1개월/3개월) ② 추세(이동평균 배열·120/200일선 위치)
+③ 모멘텀(상승률·지속) ④ 거래량(평균 대비·1~2개월 추세 증감=자금유입) ⑤ 거시 적합도
 
 아래 JSON 형식으로만 출력하세요. 모든 문자열은 자연스러운 한국어로 작성하되,
 rating은 영문 5단계(Strong Bullish/Bullish/Neutral/Bearish/Strong Bearish),

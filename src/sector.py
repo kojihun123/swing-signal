@@ -237,6 +237,45 @@ def _ma_alignment(close: pd.Series) -> tuple[str, float | None]:
     return "혼조", ma200
 
 
+def _ma_proximity(close: pd.Series, period: int) -> tuple[str | None, float | None]:
+    """현재가의 N일선 대비 위치(상향/근접/터치/하향)와 이격도(%).
+
+    이격도 = (현재가/N일선 - 1)*100. |이격|≤1% 터치, ≤3% 근접(상/하), 그 밖은
+    상향/하향. 데이터가 N일 미만이면 (None, None).
+    """
+    if len(close) < period:
+        return None, None
+    ma = float(close.tail(period).mean())
+    if not ma:
+        return None, None
+    dist = round(float(close.iloc[-1]) / ma - 1, 4) * 100
+    if abs(dist) <= 1.0:
+        pos = "터치"
+    elif dist > 3.0:
+        pos = "상향"
+    elif dist > 1.0:
+        pos = "근접(상)"
+    elif dist < -3.0:
+        pos = "하향"
+    else:
+        pos = "근접(하)"
+    return pos, round(dist, 1)
+
+
+def _vol_trend(vol: pd.Series, base: int) -> float | None:
+    """최근 5일 평균 거래량이 직전 base거래일 평균 대비 증감(%).
+
+    base=21(≈1개월)/42(≈2개월). 양수면 최근 거래량 증가(자금유입). 데이터 부족 시 None.
+    """
+    if len(vol) < base:
+        return None
+    recent = float(vol.tail(5).mean())
+    avg = float(vol.tail(base).mean())
+    if not avg:
+        return None
+    return round((recent / avg - 1) * 100, 1)
+
+
 @dataclass
 class SectorMetric:
     etf: str
@@ -248,6 +287,8 @@ class SectorMetric:
     chg_20d: float | None = None
     chg_60d: float | None = None
     vol_ratio: float | None = None
+    vol_chg_1m: float | None = None   # 최근 거래량 vs 1개월 평균 증감 %
+    vol_chg_2m: float | None = None   # 최근 거래량 vs 2개월 평균 증감 %
     rsi: float | None = None
     rs: float | None = None           # SPY 대비 5일 상대강도
     rs_1w: float | None = None        # SPY 대비 1주 상대강도
@@ -255,6 +296,10 @@ class SectorMetric:
     rs_3m: float | None = None        # SPY 대비 3개월 상대강도
     ma_alignment: str | None = None   # 정배열 / 역배열 / 혼조
     above_ma200: bool | None = None
+    ma120_pos: str | None = None      # 120일선 대비 상향/근접(상)/터치/근접(하)/하향
+    ma120_dist: float | None = None   # 120일선 이격도 %
+    ma200_pos: str | None = None      # 200일선 대비 위치
+    ma200_dist: float | None = None   # 200일선 이격도 %
     rank_5d: int | None = None        # 1=가장 강함
     total: int = 0
 
@@ -315,7 +360,10 @@ class SectorAnalyzer:
             etfs = {m.etf: {
                 "label": m.label, "chg_1d": m.chg_1d, "chg_5d": m.chg_5d,
                 "chg_20d": m.chg_20d, "chg_60d": m.chg_60d,
-                "vol_ratio": m.vol_ratio, "rsi": m.rsi, "rs": m.rs,
+                "vol_ratio": m.vol_ratio, "vol_chg_1m": m.vol_chg_1m,
+                "vol_chg_2m": m.vol_chg_2m, "ma120_pos": m.ma120_pos,
+                "ma120_dist": m.ma120_dist, "ma200_pos": m.ma200_pos,
+                "ma200_dist": m.ma200_dist, "rsi": m.rsi, "rs": m.rs,
                 "rank_5d": m.rank_5d, "total": m.total,
             } for m in self.metrics.values()}
             payload = {
@@ -356,10 +404,14 @@ class SectorAnalyzer:
             if len(vol) >= 20:
                 v20 = float(vol.tail(20).mean())
                 m.vol_ratio = float(vol.iloc[-1] / v20) if v20 else None
+            m.vol_chg_1m = _vol_trend(vol, 21)
+            m.vol_chg_2m = _vol_trend(vol, 42)
             m.rsi = _rsi(close)
             m.ma_alignment, ma200 = _ma_alignment(close)
             if ma200 is not None:
                 m.above_ma200 = bool(float(close.iloc[-1]) > ma200)
+            m.ma120_pos, m.ma120_dist = _ma_proximity(close, 120)
+            m.ma200_pos, m.ma200_dist = _ma_proximity(close, 200)
         except Exception as e:  # noqa: BLE001
             print(f"[섹터] {etf} 수집 실패: {e}")
         return m
@@ -398,7 +450,10 @@ class SectorAnalyzer:
                 "rs_1w": m.rs_1w, "rs_1m": m.rs_1m, "rs_3m": m.rs_3m,
                 "chg_5d": m.chg_5d, "chg_1m": m.chg_1m, "chg_3m": m.chg_3m,
                 "ma_alignment": m.ma_alignment, "above_ma200": m.above_ma200,
+                "ma120_pos": m.ma120_pos, "ma120_dist": m.ma120_dist,
+                "ma200_pos": m.ma200_pos, "ma200_dist": m.ma200_dist,
                 "rsi": m.rsi, "vol_ratio": m.vol_ratio,
+                "vol_chg_1m": m.vol_chg_1m, "vol_chg_2m": m.vol_chg_2m,
                 "rank_5d": m.rank_5d, "total": m.total,
             })
         return out
